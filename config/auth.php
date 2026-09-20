@@ -9,6 +9,60 @@ function requireAuth() {
         header('Location: ../login.php');
         exit;
     }
+
+    if (isset($_SESSION['last_activity']) && time() - $_SESSION['last_activity'] > 28800) {
+        session_unset();
+        session_destroy();
+        header('Location: ../login.php?error=session_expired');
+        exit;
+    }
+
+    try {
+        $pdo = getDatabaseConnection();
+        $stmt = $pdo->prepare("\n            SELECT u.*, r.name AS role_name, s.full_name AS school_name\n            FROM users u\n            JOIN roles r ON r.id = u.role_id\n            LEFT JOIN schools s ON s.id = u.school_id\n            WHERE u.id = ? AND u.is_active = 1\n            LIMIT 1\n        ");
+        $stmt->execute([$_SESSION['user_id']]);
+        $user = $stmt->fetch();
+    } catch (PDOException $e) {
+        error_log('Auth check failed: ' . $e->getMessage());
+        session_unset();
+        session_destroy();
+        header('Location: ../login.php?error=auth_unavailable');
+        exit;
+    }
+
+    if (!$user || $user['role_name'] !== $_SESSION['user_role']) {
+        session_unset();
+        session_destroy();
+        header('Location: ../login.php?error=session_invalid');
+        exit;
+    }
+
+    $_SESSION['user_role'] = $user['role_name'];
+    $_SESSION['user_school_id'] = $user['school_id'];
+    $_SESSION['school_name'] = $user['school_name'] ?? '';
+    $_SESSION['last_activity'] = time();
+}
+
+function csrf_token(): string
+{
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function csrf_field(): string
+{
+    return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars(csrf_token(), ENT_QUOTES, 'UTF-8') . '">';
+}
+
+function verify_csrf_token(): void
+{
+    $token = $_POST['csrf_token'] ?? '';
+    if (!$token || !hash_equals($_SESSION['csrf_token'] ?? '', $token)) {
+        http_response_code(419);
+        exit('Недействительный CSRF-токен. Обновите страницу и повторите действие.');
+    }
 }
 
 /**
@@ -176,13 +230,21 @@ function canManageClass($class_id, $pdo) {
     }
 
     // Учитель может управлять классами где он преподает
+    if ($user_role === 'class_teacher') {
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM classes WHERE id = ? AND school_id = ? AND class_teacher_id = ?");
+        $stmt->execute([$class_id, getCurrentUserSchoolId(), $user_id]);
+        if ((int)$stmt->fetchColumn() > 0) {
+            return true;
+        }
+    }
+
     if (in_array($user_role, ['teacher', 'class_teacher'])) {
         $stmt = $pdo->prepare("
-            SELECT COUNT(*) as count 
-            FROM schedule 
-            WHERE class_id = ? AND teacher_id = ?
+            SELECT COUNT(*) as count
+            FROM classes
+            WHERE id = ? AND school_id = ? AND is_active = 1
         ");
-        $stmt->execute([$class_id, $user_id]);
+        $stmt->execute([$class_id, getCurrentUserSchoolId()]);
         $result = $stmt->fetch();
 
         return $result && $result['count'] > 0;
@@ -230,7 +292,7 @@ function canManageStudent($student_id, $pdo) {
     if ($user_role === 'parent') {
         $stmt = $pdo->prepare("
             SELECT COUNT(*) as count 
-            FROM student_parents 
+            FROM student_parent_links 
             WHERE student_id = ? AND parent_id = ?
         ");
         $stmt->execute([$student_id, $user_id]);

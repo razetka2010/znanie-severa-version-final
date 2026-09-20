@@ -55,7 +55,7 @@ try {
     error_log("Ошибка при создании таблицы subjects: " . $e->getMessage());
 }
 
-// УДАЛЯЕМ старую таблицу schedule и создаем новую с правильной структурой
+// Проверяем структуру расписания без удаления существующих данных.
 try {
     // Проверяем существование таблицы
     $table_exists = $pdo->query("SHOW TABLES LIKE 'schedule'")->fetch();
@@ -64,8 +64,7 @@ try {
         // Проверяем есть ли столбец lesson_date
         $columns = $pdo->query("SHOW COLUMNS FROM schedule LIKE 'lesson_date'")->fetch();
         if (!$columns) {
-            // Если столбца нет, удаляем таблицу и создаем заново
-            $pdo->exec("DROP TABLE IF EXISTS schedule");
+            $pdo->exec("ALTER TABLE schedule ADD COLUMN lesson_date DATE NULL AFTER teacher_id");
         }
     }
 
@@ -100,6 +99,31 @@ $school = $school_stmt->fetch();
 
 $action = isset($_GET['action']) ? $_GET['action'] : 'view';
 $schedule_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+function scheduleAssignmentIsValid(PDO $pdo, int $school_id, int $class_id, int $subject_id, int $teacher_id): bool
+{
+    $stmt = $pdo->prepare("\n        SELECT 1\n        FROM classes c\n        JOIN subjects s ON s.id = ? AND s.school_id = c.school_id\n        JOIN users u ON u.id = ? AND u.school_id = c.school_id\n        JOIN roles r ON r.id = u.role_id AND r.name IN ('teacher', 'class_teacher')\n        WHERE c.id = ? AND c.school_id = ? AND s.is_active = 1 AND u.is_active = 1\n        LIMIT 1\n    ");
+    $stmt->execute([$subject_id, $teacher_id, $class_id, $school_id]);
+
+    return (bool)$stmt->fetchColumn();
+}
+
+function scheduleSlotExists(PDO $pdo, int $school_id, int $class_id, string $lesson_date, ?int $lesson_number): bool
+{
+    $sql = "SELECT id FROM schedule WHERE class_id = ? AND lesson_date = ? AND school_id = ?";
+    $params = [$class_id, $lesson_date, $school_id];
+    if ($lesson_number === null) {
+        $sql .= " AND lesson_number IS NULL";
+    } else {
+        $sql .= " AND lesson_number = ?";
+        $params[] = $lesson_number;
+    }
+    $sql .= " LIMIT 1";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return (bool)$stmt->fetchColumn();
+}
 
 // Получаем классы
 $classes = [];
@@ -139,6 +163,7 @@ try {
 
 // Обработка добавления расписания
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf_token();
     if ($action === 'add') {
         $class_id = intval($_POST['class_id']);
         $subject_id = intval($_POST['subject_id']);
@@ -166,16 +191,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Выберите дату урока";
         }
 
+        if (!$errors && !scheduleAssignmentIsValid($pdo, $school_id, $class_id, $subject_id, $teacher_id)) {
+            $errors[] = "Класс, предмет и учитель должны относиться к этой школе и быть активными";
+        }
+
         if (empty($errors)) {
             try {
                 // Проверяем, нет ли уже урока в это время
-                $check_stmt = $pdo->prepare("
-                    SELECT id FROM schedule 
-                    WHERE class_id = ? AND lesson_date = ? AND lesson_number = ? AND school_id = ?
-                ");
-                $check_stmt->execute([$class_id, $lesson_date, $lesson_number, $school_id]);
-
-                if ($check_stmt->fetch()) {
+                if (scheduleSlotExists($pdo, $school_id, $class_id, $lesson_date, $lesson_number)) {
                     $errors[] = "У этого класса уже есть урок в это время";
                 } else {
                     $stmt = $pdo->prepare("
@@ -216,6 +239,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($month)) $errors[] = "Выберите месяц";
         if (empty($days_of_week)) $errors[] = "Выберите дни недели";
 
+        if (!$errors && !scheduleAssignmentIsValid($pdo, $school_id, $class_id, $subject_id, $teacher_id)) {
+            $errors[] = "Класс, предмет и учитель должны относиться к этой школе и быть активными";
+        }
+
         if (empty($errors)) {
             try {
                 $pdo->beginTransaction();
@@ -231,13 +258,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     if (in_array($day_of_week, $days_of_week)) {
                         // Проверяем, нет ли уже урока в эту дату
-                        $check_stmt = $pdo->prepare("
-                            SELECT id FROM schedule 
-                            WHERE class_id = ? AND lesson_date = ? AND lesson_number = ? AND school_id = ?
-                        ");
-                        $check_stmt->execute([$class_id, $date, $lesson_number, $school_id]);
-
-                        if (!$check_stmt->fetch()) {
+                        if (!scheduleSlotExists($pdo, $school_id, $class_id, $date, $lesson_number)) {
                             $stmt = $pdo->prepare("
                                 INSERT INTO schedule (school_id, class_id, subject_id, teacher_id, lesson_date, lesson_number, room) 
                                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -606,6 +627,7 @@ foreach ($schedule as $lesson) {
                 <div class="admin-form">
                     <h2>Добавить урок в расписание</h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
                         <div class="form-grid">
                             <div class="form-group">
                                 <label>Класс *</label>
@@ -659,6 +681,7 @@ foreach ($schedule as $lesson) {
                 <div class="admin-form">
                     <h2>Добавить расписание на месяц</h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="add_month">
                         <div class="form-grid">
                             <div class="form-group">

@@ -43,6 +43,10 @@ try {
             UNIQUE KEY unique_teacher_school (user_id, school_id)
         )
     ");
+
+    // Восстанавливаем профиль учителя для пользователей, созданных супер-администратором.
+    $sync_stmt = $pdo->prepare("\n        INSERT INTO teachers (school_id, user_id)\n        SELECT u.school_id, u.id\n        FROM users u\n        JOIN roles r ON r.id = u.role_id\n        WHERE u.school_id = ?\n          AND u.is_active = 1\n          AND r.name IN ('teacher', 'class_teacher')\n          AND NOT EXISTS (\n              SELECT 1 FROM teachers t WHERE t.school_id = u.school_id AND t.user_id = u.id\n          )\n    ");
+    $sync_stmt->execute([$school_id]);
 } catch (PDOException $e) {
     error_log("Ошибка при создании таблицы teachers: " . $e->getMessage());
 }
@@ -50,7 +54,7 @@ try {
 // Получаем ID роли учителя
 $teacher_role_id = null;
 try {
-    $stmt = $pdo->prepare("SELECT id FROM roles WHERE name IN ('teacher', 'class_teacher') LIMIT 1");
+    $stmt = $pdo->prepare("SELECT id FROM roles WHERE name = 'teacher' LIMIT 1");
     $stmt->execute();
     $role = $stmt->fetch();
     $teacher_role_id = $role['id'] ?? null;
@@ -740,6 +744,13 @@ try {
                 <div class="teachers-container">
                     <h2>Список учителей</h2>
 
+                    <div class="admin-filters">
+                        <div class="filter-group">
+                            <label for="teacherSearch">Поиск учителя</label>
+                            <input type="search" id="teacherSearch" placeholder="ФИО, логин, email или предмет..." autocomplete="off">
+                        </div>
+                    </div>
+
                     <?php if (empty($teachers)): ?>
                         <div class="empty-state">
                             <p>Учителя не добавлены</p>
@@ -788,5 +799,16 @@ try {
         </div>
     </main>
 </div>
+<script>
+    const teacherSearch = document.getElementById('teacherSearch');
+    if (teacherSearch) {
+        teacherSearch.addEventListener('input', function() {
+            const query = this.value.trim().toLowerCase();
+            document.querySelectorAll('.data-table tbody tr').forEach(row => {
+                row.hidden = query !== '' && !row.textContent.toLowerCase().includes(query);
+            });
+        });
+    }
+</script>
 </body>
 </html>

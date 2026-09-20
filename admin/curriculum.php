@@ -12,6 +12,32 @@ $pdo = getDatabaseConnection();
 $action = isset($_GET['action']) ? $_GET['action'] : '';
 $curriculum_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
+function decodeCurriculumSubjects(?string $json): array
+{
+    $subjects = json_decode($json ?? '[]', true);
+
+    if (!is_array($subjects)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($subjects as $subject) {
+        if (is_array($subject)) {
+            $normalized[] = [
+                'name' => (string)($subject['name'] ?? ''),
+                'hours' => (string)($subject['hours'] ?? '')
+            ];
+        } elseif (is_scalar($subject)) {
+            $normalized[] = [
+                'name' => (string)$subject,
+                'hours' => ''
+            ];
+        }
+    }
+
+    return $normalized;
+}
+
 // Обработка добавления учебного плана
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add') {
@@ -236,7 +262,10 @@ $curriculums = $pdo->query($sql)->fetchAll();
                                 <h3>Предметы</h3>
                                 <div id="subjects-container">
                                     <?php
-                                    $subjects = $curriculum_data ? json_decode($curriculum_data['subjects'], true) : [['name' => '', 'hours' => '']];
+                                    $subjects = $curriculum_data ? decodeCurriculumSubjects($curriculum_data['subjects']) : [];
+                                    if (!$subjects) {
+                                        $subjects = [['name' => '', 'hours' => '']];
+                                    }
                                     foreach ($subjects as $index => $subject):
                                         ?>
                                         <div class="subject-row" data-index="<?php echo $index; ?>">
@@ -337,13 +366,13 @@ $curriculums = $pdo->query($sql)->fetchAll();
                             <h3>Предметы</h3>
                             <div class="subjects-list">
                                 <?php
-                                $subjects = json_decode($curriculum_data['subjects'], true);
+                                $subjects = decodeCurriculumSubjects($curriculum_data['subjects']);
                                 if ($subjects && is_array($subjects)):
                                     foreach ($subjects as $subject):
                                         ?>
                                         <div class="subject-item">
                                             <span class="subject-name"><?php echo htmlspecialchars($subject['name']); ?></span>
-                                            <span class="subject-hours"><?php echo $subject['hours']; ?> ч/нед</span>
+                                            <span class="subject-hours"><?php echo $subject['hours'] !== '' ? htmlspecialchars($subject['hours']) . ' ч/нед' : 'Часы не указаны'; ?></span>
                                         </div>
                                     <?php
                                     endforeach;
@@ -434,7 +463,7 @@ $curriculums = $pdo->query($sql)->fetchAll();
                                 <?php else: ?>
                                     <?php foreach ($curriculums as $curriculum):
                                         $grades = json_decode($curriculum['grades'], true) ?: [];
-                                        $subjects = json_decode($curriculum['subjects'], true) ?: [];
+                                        $subjects = decodeCurriculumSubjects($curriculum['subjects']);
                                         ?>
                                         <tr data-id="<?php echo $curriculum['id']; ?>" data-school-id="<?php echo $curriculum['school_id']; ?>" data-grades='<?php echo json_encode($grades); ?>'>
                                             <td>

@@ -25,11 +25,11 @@ $stats = [
 try {
     // Количество классов
     $stmt = $pdo->prepare("
-        SELECT COUNT(DISTINCT class_id) as count 
-        FROM schedule 
-        WHERE teacher_id = ? AND school_id = ?
+        SELECT COUNT(*) as count
+        FROM classes c
+        WHERE c.school_id = ? AND c.is_active = 1
     ");
-    $stmt->execute([$teacher_id, $school_id]);
+    $stmt->execute([$school_id]);
     $stats['total_classes'] = $stmt->fetch()['count'];
 
     // Количество учеников
@@ -429,15 +429,150 @@ try {
             margin-bottom: 10px;
             display: block;
         }
+
+        :root {
+            --bg: #f3f7ff;
+            --panel: #ffffff;
+            --panel-soft: #f8fafc;
+            --sidebar: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+            --primary: #2563eb;
+            --primary-strong: #1d4ed8;
+            --line: #e2e8f0;
+            --text: #1f2937;
+            --muted: #64748b;
+            --shadow: 0 12px 28px rgba(15, 23, 42, 0.10);
+        }
+
+        body {
+            background: linear-gradient(180deg, #eef4ff 0%, #f8fafc 100%);
+            color: var(--text);
+        }
+
+        .sidebar {
+            background: var(--sidebar);
+            box-shadow: 12px 0 30px rgba(15, 23, 42, 0.12);
+        }
+
+        .sidebar-header {
+            background: rgba(255,255,255,0.04);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+
+        .nav-link {
+            color: rgba(255,255,255,0.82);
+            border-radius: 0 12px 12px 0;
+            margin-right: 12px;
+            transition: all 0.25s ease;
+        }
+
+        .nav-link:hover,
+        .nav-link.active {
+            background: rgba(255,255,255,0.08);
+            border-left-color: #7dd3fc;
+            color: white;
+        }
+
+        .content-header {
+            background: rgba(255,255,255,0.95);
+            box-shadow: 0 2px 12px rgba(15, 23, 42, 0.05);
+        }
+
+        .stat-card,
+        .section {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            box-shadow: var(--shadow);
+        }
+
+        .stat-card {
+            border-radius: 16px;
+            padding: 24px;
+            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .stat-icon {
+            width: 58px;
+            height: 58px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #60a5fa, #2563eb);
+            border-radius: 14px;
+            color: white;
+            margin-bottom: 0;
+            font-size: 1.8em;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            color: var(--text);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--muted);
+            font-size: 0.8rem;
+            margin-top: 4px;
+        }
+
+        .section {
+            border-radius: 18px;
+            padding: 25px;
+        }
+
+        .section-header {
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .data-table th {
+            background: var(--panel-soft);
+        }
+
+        .btn,
+        .btn-primary,
+        .btn-success,
+        .btn-secondary {
+            border-radius: 10px;
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.16);
+        }
+
+        .btn,
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+            color: white;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+        }
+
+        .quick-action-btn {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        .quick-action-btn:hover {
+            border-color: rgba(37, 99, 235, 0.35);
+            transform: translateY(-3px);
+            box-shadow: 0 16px 28px rgba(37, 99, 235, 0.12);
+        }
     </style>
+    <link rel="stylesheet" href="../css/teacher.css">
 </head>
 <body>
 <div class="dashboard-container">
     <!-- Боковая панель навигации -->
     <aside class="sidebar">
         <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Учитель</p>
+            <h1>Знание Севера</h1>
+            <p>Электронный дневник</p>
         </div>
         <nav class="sidebar-nav">
             <div class="user-info">
@@ -448,11 +583,12 @@ try {
                 <li><a href="dashboard.php" class="nav-link active">📊 Главная</a></li>
                 <li class="nav-section">Учебный процесс</li>
                 <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
+                <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
                 <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
                 <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
                 <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
                 <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li><a href="reports_advanced.php" class="nav-link">📈 Отчеты2</a></li>
+                <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
                 <li class="nav-section">Общее</li>
                 <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
                 <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>

@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $short_name = isset($_POST['short_name']) ? trim($_POST['short_name']) : '';
         $inn = isset($_POST['inn']) ? trim($_POST['inn']) : '';
         $type = isset($_POST['type']) ? $_POST['type'] : 'общеобразовательная';
-        $status = 'активная';
+        $status = 'active';
         $legal_address = isset($_POST['legal_address']) ? trim($_POST['legal_address']) : '';
         $physical_address = isset($_POST['physical_address']) ? trim($_POST['physical_address']) : '';
         $phone = isset($_POST['phone']) ? trim($_POST['phone']) : '';
@@ -56,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $short_name = isset($_POST['short_name']) ? trim($_POST['short_name']) : '';
         $inn = isset($_POST['inn']) ? trim($_POST['inn']) : '';
         $type = isset($_POST['type']) ? $_POST['type'] : 'общеобразовательная';
-        $status = isset($_POST['status']) ? $_POST['status'] : 'активная';
+        $status = isset($_POST['status']) ? $_POST['status'] : 'active';
         $legal_address = isset($_POST['legal_address']) ? trim($_POST['legal_address']) : '';
         $physical_address = isset($_POST['physical_address']) ? trim($_POST['physical_address']) : '';
         $phone = isset($_POST['phone']) ? trim($_POST['phone']) : '';
@@ -232,9 +232,9 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
                                     <div class="form-group">
                                         <label>Статус</label>
                                         <select name="status">
-                                            <option value="активная" <?php echo ($school_data && $school_data['status'] == 'активная') ? 'selected' : ''; ?>>Активная</option>
-                                            <option value="неактивная" <?php echo ($school_data && $school_data['status'] == 'неактивная') ? 'selected' : ''; ?>>Неактивная</option>
-                                            <option value="архив" <?php echo ($school_data && $school_data['status'] == 'архив') ? 'selected' : ''; ?>>Архив</option>
+                                            <option value="active" <?php echo (!$school_data || $school_data['status'] == 'active') ? 'selected' : ''; ?>>Активная</option>
+                                            <option value="inactive" <?php echo ($school_data && $school_data['status'] == 'inactive') ? 'selected' : ''; ?>>Неактивная</option>
+                                            <option value="archive" <?php echo ($school_data && $school_data['status'] == 'archive') ? 'selected' : ''; ?>>Архив</option>
                                         </select>
                                     </div>
                                 <?php endif; ?>

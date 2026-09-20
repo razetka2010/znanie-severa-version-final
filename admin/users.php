@@ -10,8 +10,30 @@ $pdo = getDatabaseConnection();
 $action = isset($_GET['action']) ? $_GET['action'] : '';
 $user_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
+function getPostedSchoolId(): ?int
+{
+    $school_id = filter_input(INPUT_POST, 'school_id', FILTER_VALIDATE_INT, [
+        'options' => ['min_range' => 1]
+    ]);
+
+    return $school_id ?: null;
+}
+
+function validateSchoolId(PDO $pdo, ?int $school_id): ?string
+{
+    if ($school_id === null) {
+        return null;
+    }
+
+    $stmt = $pdo->prepare('SELECT id FROM schools WHERE id = ?');
+    $stmt->execute([$school_id]);
+
+    return $stmt->fetchColumn() === false ? 'Выбранная школа не существует. Обновите список школ и повторите попытку.' : null;
+}
+
 // Обработка добавления пользователя
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf_token();
     if ($action === 'add') {
         $login = trim($_POST['login']);
         $password = $_POST['password'];
@@ -20,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $phone = trim($_POST['phone']);
         $position = trim($_POST['position']);
         $role_id = intval($_POST['role_id']);
-        $school_id = isset($_POST['school_id']) ? intval($_POST['school_id']) : null;
+        $school_id = getPostedSchoolId();
         $is_active = isset($_POST['is_active']) ? 1 : 0;
 
         // Валидация
@@ -44,6 +66,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Email обязателен для заполнения";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Некорректный формат email";
+        }
+
+        $school_error = validateSchoolId($pdo, $school_id);
+        if ($school_error !== null) {
+            $errors[] = $school_error;
         }
 
         // Проверка уникальности логина
@@ -94,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $phone = trim($_POST['phone']);
         $position = trim($_POST['position']);
         $role_id = intval($_POST['role_id']);
-        $school_id = isset($_POST['school_id']) ? intval($_POST['school_id']) : null;
+        $school_id = getPostedSchoolId();
         $is_active = isset($_POST['is_active']) ? 1 : 0;
 
         // Валидация
@@ -112,6 +139,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Email обязателен для заполнения";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Некорректный формат email";
+        }
+
+        $school_error = validateSchoolId($pdo, $school_id);
+        if ($school_error !== null) {
+            $errors[] = $school_error;
         }
 
         // Проверка уникальности логина
@@ -249,7 +281,7 @@ if (($action === 'edit' || $action === 'view') && $user_id > 0) {
 $roles = $pdo->query("SELECT id, name FROM roles ORDER BY name")->fetchAll();
 
 // Получение списка школ для выпадающего списка
-$schools = $pdo->query("SELECT id, full_name FROM schools WHERE status = 'активная' ORDER BY full_name")->fetchAll();
+$schools = $pdo->query("SELECT id, full_name FROM schools WHERE status = 'active' ORDER BY full_name")->fetchAll();
 
 // Получение списка пользователей из БД
 $sql = "
@@ -361,6 +393,7 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                 <div class="admin-form">
                     <h2><?php echo $action === 'add' ? 'Добавить пользователя' : 'Редактировать пользователя'; ?></h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
                         <div class="form-grid">
                             <div class="form-group">
                                 <label for="login">Логин *</label>
@@ -500,6 +533,13 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                 <div class="admin-table-container">
                     <h2>Все пользователи системы</h2>
 
+                    <div class="admin-filters">
+                        <div class="filter-group">
+                            <label for="userSearch">Поиск пользователя</label>
+                            <input type="search" id="userSearch" placeholder="ФИО, логин, email или школа..." autocomplete="off">
+                        </div>
+                    </div>
+
                     <div class="soft-delete-info">
                         <strong>💡 Информация:</strong> При удалении пользователей с связанными данными (расписание, оценки и т.д.)
                         используется "мягкое удаление" - пользователь деактивируется, а его логин и email изменяются.
@@ -580,6 +620,16 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                 setTimeout(() => alert.remove(), 500);
             }, 5000);
         });
+
+        const userSearch = document.getElementById('userSearch');
+        if (userSearch) {
+            userSearch.addEventListener('input', function() {
+                const query = this.value.trim().toLowerCase();
+                document.querySelectorAll('.admin-table tbody tr').forEach(row => {
+                    row.hidden = query !== '' && !row.textContent.toLowerCase().includes(query);
+                });
+            });
+        }
 
         // Подсказка для поля пароля при редактировании
         const passwordField = document.getElementById('password');

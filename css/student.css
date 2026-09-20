@@ -1,0 +1,205 @@
+/* Единый стиль кабинета ученика */
+:root {
+    --student-surface: #ffffff;
+    --student-line: #dbe4f0;
+    --student-text: #1f2937;
+    --student-muted: #64748b;
+    --student-primary: #2563eb;
+    --student-primary-dark: #1d4ed8;
+    --student-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+body {
+    background: linear-gradient(180deg, #eef4ff 0%, #f8fafc 100%) !important;
+    color: var(--student-text) !important;
+    overflow-x: hidden;
+}
+
+@media (min-width: 769px) {
+    .sidebar {
+        position: sticky !important;
+        top: 0;
+        left: auto !important;
+        flex: 0 0 280px;
+        width: 280px !important;
+        height: 100vh;
+        overflow-y: auto;
+        z-index: 20;
+    }
+
+    .main-content {
+        min-width: 0;
+        margin-left: 0 !important;
+        flex: 1 1 auto;
+    }
+}
+
+.sidebar {
+    background: linear-gradient(145deg, #0f172a 0%, #1e3a8a 100%) !important;
+    color: #fff !important;
+}
+
+.sidebar-header,
+.user-info {
+    background: transparent !important;
+    color: #fff !important;
+    border-color: rgba(148, 163, 184, 0.35) !important;
+}
+
+.sidebar-header h1,
+.user-info strong {
+    color: #fff !important;
+}
+
+.sidebar-header p,
+.nav-section {
+    color: rgba(255, 255, 255, 0.72) !important;
+}
+
+.sidebar .nav-link {
+    color: rgba(255, 255, 255, 0.86) !important;
+}
+
+.sidebar .nav-link:hover,
+.sidebar .nav-link.active {
+    color: #fff !important;
+    background: rgba(96, 165, 250, 0.2) !important;
+    border-left-color: #60a5fa !important;
+}
+
+.role-badge {
+    background: #ef6b61 !important;
+    color: #fff !important;
+    border-radius: 999px !important;
+    padding: 4px 9px !important;
+}
+
+.main-content {
+    background: transparent !important;
+}
+
+.content-header {
+    background: rgba(255, 255, 255, 0.96) !important;
+    border-color: var(--student-line) !important;
+    padding: 28px 32px !important;
+}
+
+.content-body {
+    padding: 32px !important;
+}
+
+.stat-card,
+.card,
+.panel,
+.section,
+.subject-card,
+.lesson-card,
+.homework-card,
+.schedule-section,
+.dashboard-card {
+    background: var(--student-surface) !important;
+    border: 1px solid var(--student-line) !important;
+    border-radius: 16px !important;
+    box-shadow: var(--student-shadow) !important;
+}
+
+h1, h2, h3, h4,
+.section-title,
+.page-title {
+    color: var(--student-text) !important;
+    line-height: 1.3;
+}
+
+p,
+.muted,
+.lesson-meta,
+.homework-meta,
+.empty-state {
+    color: var(--student-muted);
+    line-height: 1.55;
+}
+
+input,
+select,
+textarea {
+    min-height: 42px;
+    max-width: 100%;
+    border: 1px solid var(--student-line) !important;
+    border-radius: 9px !important;
+    background: #fff !important;
+    color: var(--student-text) !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--student-primary) !important;
+    outline: 3px solid rgba(37, 99, 235, 0.14) !important;
+}
+
+.btn {
+    min-height: 42px;
+    border-radius: 10px !important;
+    font-weight: 600;
+}
+
+.btn-primary,
+.btn-success {
+    background: linear-gradient(135deg, var(--student-primary), var(--student-primary-dark)) !important;
+    color: #fff !important;
+}
+
+table {
+    max-width: 100%;
+    border-color: var(--student-line);
+}
+
+table th {
+    background: #f8fafc !important;
+    color: var(--student-text) !important;
+}
+
+table th,
+table td {
+    border-bottom-color: var(--student-line) !important;
+}
+
+.alert {
+    border-radius: 10px !important;
+    line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+    .content-header {
+        padding: 20px 16px !important;
+    }
+
+    .content-body {
+        padding: 22px 16px !important;
+    }
+
+    .data-table,
+    table {
+        display: block;
+        width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .form-grid,
+    .filter-form,
+    .filters-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .content-body {
+        padding: 18px 12px !important;
+    }
+
+    .nav-menu {
+        grid-template-columns: 1fr;
+    }
+}

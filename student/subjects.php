@@ -57,11 +57,9 @@ try {
                 grade_value,
                 COUNT(*) as count,
                 lesson_date,
-                grade_type_id,
-                gt.name as grade_type,
-                g.comments
+                COALESCE(gw.weight, 1) AS grade_weight
             FROM grades g 
-            LEFT JOIN grade_types gt ON g.grade_type_id = gt.id 
+            LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
             WHERE g.student_id = ? AND g.subject_id = ?
             ORDER BY g.lesson_date DESC
         ");
@@ -77,8 +75,14 @@ try {
         $average_grade = 0;
 
         if ($grades_count > 0) {
-            $sum = array_sum(array_column($numeric_grades, 'grade_value'));
-            $average_grade = round($sum / $grades_count, 2);
+            $weighted_sum = 0;
+            $weight_total = 0;
+            foreach ($numeric_grades as $numeric_grade) {
+                $weight = (float)($numeric_grade['grade_weight'] ?? 1);
+                $weighted_sum += (float)$numeric_grade['grade_value'] * $weight;
+                $weight_total += $weight;
+            }
+            $average_grade = $weight_total > 0 ? round($weighted_sum / $weight_total, 2) : 0;
         }
 
         // Распределение оценок
@@ -859,6 +863,7 @@ $lesson_times = [
             color: #3498db;
         }
     </style>
+    <link rel="stylesheet" href="../css/student.css">
 </head>
 <body>
 <div class="dashboard-container">

@@ -9,6 +9,30 @@ $pdo = getDatabaseConnection();
 $teacher_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
 
+// Поддерживаем старую локальную таблицу homework без потери существующих данных.
+try {
+    $homework_table = $pdo->query("SHOW TABLES LIKE 'homework'")->fetchColumn();
+    if (!$homework_table) {
+        $pdo->exec("CREATE TABLE homework (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            teacher_id INT NOT NULL,
+            class_id INT NOT NULL,
+            subject_id INT NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            due_date DATE NOT NULL,
+            description TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )");
+    } else {
+        $title_column = $pdo->query("SHOW COLUMNS FROM homework LIKE 'title'")->fetch();
+        if (!$title_column) {
+            $pdo->exec("ALTER TABLE homework ADD COLUMN title VARCHAR(255) NOT NULL DEFAULT 'Домашнее задание' AFTER subject_id");
+        }
+    }
+} catch (PDOException $e) {
+    error_log("Ошибка при проверке таблицы homework: " . $e->getMessage());
+}
+
 // Создаем таблицу домашних заданий если её нет
 try {
     $pdo->exec("
@@ -17,6 +41,7 @@ try {
             teacher_id INT NOT NULL,
             class_id INT NOT NULL,
             subject_id INT NOT NULL,
+            title VARCHAR(255) NOT NULL,
             due_date DATE NOT NULL,
             description TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -40,11 +65,10 @@ try {
     $stmt = $pdo->prepare("
         SELECT DISTINCT c.id, c.name, c.grade_level 
         FROM classes c 
-        JOIN schedule sch ON c.id = sch.class_id 
-        WHERE sch.teacher_id = ? AND sch.school_id = ?
+        WHERE c.school_id = ? AND c.is_active = 1
         ORDER BY c.grade_level, c.name
     ");
-    $stmt->execute([$teacher_id, $school_id]);
+    $stmt->execute([$school_id]);
     $classes = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении классов: " . $e->getMessage());
@@ -62,24 +86,45 @@ try {
 
 // Обработка добавления домашнего задания
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    verify_csrf_token();
     if ($_POST['action'] === 'add_homework') {
         $class_id = intval($_POST['class_id']);
         $subject_id = intval($_POST['subject_id']);
+        $title = trim($_POST['title'] ?? '');
         $due_date = $_POST['due_date'];
         $description = trim($_POST['description']);
 
         try {
+            if ($title === '' || $description === '' || !$due_date) {
+                throw new InvalidArgumentException('Заполните название, описание и срок сдачи задания.');
+            }
+
+            $access_stmt = $pdo->prepare("SELECT 1 FROM schedule WHERE teacher_id = ? AND school_id = ? AND class_id = ? AND subject_id = ? LIMIT 1");
+            $access_stmt->execute([$teacher_id, $school_id, $class_id, $subject_id]);
+            if (!$access_stmt->fetchColumn()) {
+                throw new InvalidArgumentException('Выбранные класс и предмет не назначены этому учителю.');
+            }
+
             $stmt = $pdo->prepare("
-                INSERT INTO homework (teacher_id, class_id, subject_id, due_date, description, created_at) 
-                VALUES (?, ?, ?, ?, ?, NOW())
+                INSERT INTO homework (teacher_id, class_id, subject_id, title, due_date, description, created_at) 
+                VALUES (?, ?, ?, ?, ?, ?, NOW())
             ");
-            $stmt->execute([$teacher_id, $class_id, $subject_id, $due_date, $description]);
+            $stmt->execute([$teacher_id, $class_id, $subject_id, $title, $due_date, $description]);
+            logUserAction($pdo, 'homework_created', json_encode([
+                'class_id' => $class_id,
+                'subject_id' => $subject_id,
+                'title' => $title
+            ], JSON_UNESCAPED_UNICODE));
 
             $_SESSION['success_message'] = "Домашнее задание успешно добавлено!";
             header('Location: homework.php');
             exit;
         } catch (PDOException $e) {
             $_SESSION['error_message'] = "Ошибка при добавлении задания: " . $e->getMessage();
+            header('Location: homework.php');
+            exit;
+        } catch (InvalidArgumentException $e) {
+            $_SESSION['error_message'] = $e->getMessage();
             header('Location: homework.php');
             exit;
         }
@@ -92,6 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         try {
             $stmt = $pdo->prepare("DELETE FROM homework WHERE id = ? AND teacher_id = ?");
             $stmt->execute([$homework_id, $teacher_id]);
+            logUserAction($pdo, 'homework_deleted', json_encode(['homework_id' => $homework_id]));
 
             $_SESSION['success_message'] = "Домашнее задание удалено!";
             header('Location: homework.php');
@@ -557,13 +603,14 @@ try {
             color: #721c24;
         }
     </style>
+    <link rel="stylesheet" href="../css/teacher.css">
 </head>
 <body>
 <div class="dashboard-container">
     <aside class="sidebar">
         <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Учитель</p>
+            <h1>Знание Севера</h1>
+            <p>Электронный дневник</p>
         </div>
         <nav class="sidebar-nav">
             <div class="user-info">
@@ -574,11 +621,12 @@ try {
                 <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
                 <li class="nav-section">Учебный процесс</li>
                 <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
+                <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
                 <li><a href="homework.php" class="nav-link active">📚 Домашние задания</a></li>
                 <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
                 <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
                 <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li><a href="reports_advanced.php" class="nav-link">📈 Отчеты2</a></li>
+                <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
                 <li class="nav-section">Общее</li>
                 <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
                 <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
@@ -610,6 +658,7 @@ try {
                 </div>
 
                 <form method="POST" class="homework-form">
+                    <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="add_homework">
 
                     <div class="form-row">
@@ -635,6 +684,11 @@ try {
                                     </option>
                                 <?php endforeach; ?>
                             </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Название задания:</label>
+                            <input type="text" name="title" required maxlength="255" placeholder="Например: Упражнения по теме">
                         </div>
 
                         <div class="form-group">
@@ -672,7 +726,8 @@ try {
                                 <div class="homework-header">
                                     <div>
                                         <h3 style="margin: 0 0 5px 0; color: #2c3e50;">
-                                            <?= htmlspecialchars($homework['class_name']) ?> - <?= htmlspecialchars($homework['subject_name']) ?>
+                                            <?= htmlspecialchars($homework['title']) ?>
+                                            <small><?= htmlspecialchars($homework['class_name']) ?> - <?= htmlspecialchars($homework['subject_name']) ?></small>
                                         </h3>
                                         <div class="homework-meta">
                                             Добавлено: <?= date('d.m.Y', strtotime($homework['created_at'])) ?>
@@ -685,6 +740,7 @@ try {
                                     </div>
                                     <div class="homework-actions">
                                         <form method="POST" style="display: inline;">
+                                            <?php echo csrf_field(); ?>
                                             <input type="hidden" name="action" value="delete_homework">
                                             <input type="hidden" name="homework_id" value="<?= $homework['id'] ?>">
                                             <button type="submit" class="btn btn-danger" onclick="return confirm('Удалить это задание?')">

@@ -2,12 +2,19 @@
 session_start();
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once '../config/report_files.php';
 
 requireTeacher();
 
 $pdo = getDatabaseConnection();
 $teacher_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
+
+try {
+    ensureReportFilesSchema($pdo);
+} catch (PDOException $e) {
+    error_log('Ошибка подготовки таблицы report_files: ' . $e->getMessage());
+}
 
 // Создаем или обновляем таблицу report_files
 try {
@@ -227,11 +234,10 @@ try {
     $stmt = $pdo->prepare("
         SELECT DISTINCT c.id, c.name, c.grade_level 
         FROM classes c 
-        JOIN schedule sch ON c.id = sch.class_id 
-        WHERE sch.teacher_id = ? AND sch.school_id = ?
+        WHERE c.school_id = ? AND c.is_active = 1
         ORDER BY c.grade_level, c.name
     ");
-    $stmt->execute([$teacher_id, $school_id]);
+    $stmt->execute([$school_id]);
     $my_classes = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении классов: " . $e->getMessage());
@@ -669,14 +675,15 @@ try {
                 border-bottom: none;
             }
         </style>
+        <link rel="stylesheet" href="../css/teacher.css">
     </head>
     <body>
     <div class="dashboard-container">
         <!-- Боковая панель навигации -->
         <aside class="sidebar">
             <div class="sidebar-header">
-                <h1>Электронный дневник</h1>
-                <p>Учитель</p>
+                <h1>Знание Севера</h1>
+                <p>Электронный дневник</p>
                 <?php if ($school): ?>
                     <div style="margin-top: 10px; font-size: 0.8em; opacity: 0.8;">
                         <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
@@ -692,11 +699,12 @@ try {
                     <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
                     <li class="nav-section">Учебный процесс</li>
                     <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
+                    <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
                     <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
                     <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
                     <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
                     <li><a href="reports.php" class="nav-link active">📈 Отчеты</a></li>
-                    <li><a href="reports_advanced.php" class="nav-link">📈 Отчеты2</a></li>
+                    <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
                     <li class="nav-section">Общее</li>
                     <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
                     <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>

@@ -806,6 +806,7 @@ function getSubstitutionByNumber($substitutions, $lesson_date, $lesson_number) {
                 margin-left: 5px;
             }
         </style>
+        <link rel="stylesheet" href="../css/student.css">
     </head>
     <body>
     <div class="dashboard-container">

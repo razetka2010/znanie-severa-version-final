@@ -2,12 +2,19 @@
 session_start();
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once '../config/homework_completion.php';
 
 requireStudent();
 
 $pdo = getDatabaseConnection();
 $student_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
+
+try {
+    ensureHomeworkCompletionSchema($pdo);
+} catch (PDOException $e) {
+    error_log('Ошибка подготовки таблицы выполнения ДЗ: ' . $e->getMessage());
+}
 
 // Получаем информацию о ученике
 $student_stmt = $pdo->prepare("
@@ -58,7 +65,7 @@ try {
             s.name as subject_name,
             s.id as subject_id,
             u.full_name as teacher_name,
-            hc.completed_at,
+            hc.submitted_at AS completed_at,
             hc.student_comment
         FROM homework h 
         JOIN subjects s ON h.subject_id = s.id 
@@ -71,11 +78,11 @@ try {
 
     // Фильтр по статусу
     if ($filter_status === 'active') {
-        $query .= " AND (hc.completed_at IS NULL OR h.due_date >= CURDATE())";
+        $query .= " AND (hc.status IS NULL OR hc.status <> 'done' OR h.due_date >= CURDATE())";
     } elseif ($filter_status === 'completed') {
-        $query .= " AND hc.completed_at IS NOT NULL";
+        $query .= " AND hc.status = 'done'";
     } elseif ($filter_status === 'overdue') {
-        $query .= " AND hc.completed_at IS NULL AND h.due_date < CURDATE()";
+        $query .= " AND (hc.status IS NULL OR hc.status <> 'done') AND h.due_date < CURDATE()";
     }
 
     // Фильтр по предмету
@@ -91,10 +98,10 @@ try {
     }
 
     $query .= " ORDER BY 
-        CASE WHEN hc.completed_at IS NULL AND h.due_date < CURDATE() THEN 0
-             WHEN hc.completed_at IS NULL AND h.due_date = CURDATE() THEN 1
-             WHEN hc.completed_at IS NULL AND h.due_date = CURDATE() + INTERVAL 1 DAY THEN 2
-             WHEN hc.completed_at IS NULL THEN 3
+           CASE WHEN (hc.status IS NULL OR hc.status <> 'done') AND h.due_date < CURDATE() THEN 0
+               WHEN (hc.status IS NULL OR hc.status <> 'done') AND h.due_date = CURDATE() THEN 1
+               WHEN (hc.status IS NULL OR hc.status <> 'done') AND h.due_date = CURDATE() + INTERVAL 1 DAY THEN 2
+               WHEN hc.status IS NULL OR hc.status <> 'done' THEN 3
              ELSE 4 END,
         h.due_date ASC, 
         h.created_at DESC";
@@ -107,9 +114,9 @@ try {
     $stats_stmt = $pdo->prepare("
         SELECT 
             COUNT(*) as total,
-            COUNT(CASE WHEN hc.completed_at IS NOT NULL THEN 1 END) as completed,
-            COUNT(CASE WHEN hc.completed_at IS NULL AND h.due_date < CURDATE() THEN 1 END) as overdue,
-            COUNT(CASE WHEN hc.completed_at IS NULL AND h.due_date <= CURDATE() + INTERVAL 1 DAY THEN 1 END) as urgent
+            COUNT(CASE WHEN hc.status = 'done' THEN 1 END) as completed,
+            COUNT(CASE WHEN (hc.status IS NULL OR hc.status <> 'done') AND h.due_date < CURDATE() THEN 1 END) as overdue,
+            COUNT(CASE WHEN (hc.status IS NULL OR hc.status <> 'done') AND h.due_date <= CURDATE() + INTERVAL 1 DAY THEN 1 END) as urgent
         FROM homework h 
         LEFT JOIN homework_completion hc ON h.id = hc.homework_id AND hc.student_id = ?
         WHERE h.class_id = ?
@@ -143,11 +150,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
             if ($existing) {
                 // Обновляем существующую запись
-                $stmt = $pdo->prepare("UPDATE homework_completion SET completed_at = NOW(), student_comment = ? WHERE homework_id = ? AND student_id = ?");
+                $stmt = $pdo->prepare("UPDATE homework_completion SET status = 'done', submitted_at = NOW(), student_comment = ? WHERE homework_id = ? AND student_id = ?");
                 $stmt->execute([$student_comment, $homework_id, $student_id]);
             } else {
                 // Создаем новую запись
-                $stmt = $pdo->prepare("INSERT INTO homework_completion (homework_id, student_id, completed_at, student_comment) VALUES (?, ?, NOW(), ?)");
+                $stmt = $pdo->prepare("INSERT INTO homework_completion (homework_id, student_id, status, submitted_at, student_comment) VALUES (?, ?, 'done', NOW(), ?)");
                 $stmt->execute([$homework_id, $student_id, $student_comment]);
             }
 
@@ -181,25 +188,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     }
 }
 
-// Создаем таблицу выполнения домашних заданий если её нет
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS homework_completion (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            homework_id INT NOT NULL,
-            student_id INT NOT NULL,
-            completed_at TIMESTAMP NULL,
-            student_comment TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (homework_id) REFERENCES homework(id) ON DELETE CASCADE,
-            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE KEY unique_homework_student (homework_id, student_id)
-        )
-    ");
-} catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы homework_completion: " . $e->getMessage());
-}
-
 // Получаем ближайшие дедлайны
 $upcoming_deadlines = [];
 try {
@@ -214,7 +202,7 @@ try {
         LEFT JOIN homework_completion hc ON h.id = hc.homework_id AND hc.student_id = ?
         WHERE h.class_id = ? 
         AND h.due_date >= CURDATE() 
-        AND hc.completed_at IS NULL
+        AND (hc.status IS NULL OR hc.status <> 'done')
         ORDER BY h.due_date ASC 
         LIMIT 5
     ");
@@ -857,6 +845,7 @@ try {
             background: #e67e22;
         }
     </style>
+    <link rel="stylesheet" href="../css/student.css">
 </head>
 <body>
 <div class="dashboard-container">

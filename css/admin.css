@@ -1,19 +1,34 @@
 /* Стили для админ-панели */
+:root {
+    --admin-bg: #f3f7ff;
+    --admin-surface: #ffffff;
+    --admin-line: #e2e8f0;
+    --admin-primary: #2563eb;
+    --admin-primary-strong: #1d4ed8;
+    --admin-text: #1f2937;
+    --admin-muted: #64748b;
+    --admin-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+}
 
 /* Основные стили для админ-дашборда */
 .dashboard-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 25px;
+    gap: 22px;
     margin-bottom: 30px;
 }
 
 .dashboard-card {
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    border: 1px solid #e0e0e0;
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    background: var(--admin-surface);
+    border-radius: 18px;
+    box-shadow: var(--admin-shadow);
+    border: 1px solid var(--admin-line);
+    transition: transform 0.22s ease, box-shadow 0.22s ease;
+    overflow: hidden;
+}
+
+.dashboard-card + .dashboard-card {
+    margin-top: 0;
 }
 
 .dashboard-card:hover {
@@ -22,7 +37,7 @@
 }
 
 .card-header {
-    padding: 20px 25px;
+    padding: 18px 22px;
     border-bottom: 1px solid #e0e0e0;
     display: flex;
     justify-content: space-between;
@@ -51,7 +66,7 @@
 }
 
 .card-content {
-    padding: 25px;
+    padding: 22px;
 }
 
 .empty-state {
@@ -253,9 +268,9 @@
 .admin-form {
     background: white;
     padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    border: 1px solid #e0e0e0;
+    border-radius: 18px;
+    box-shadow: var(--admin-shadow);
+    border: 1px solid var(--admin-line);
     margin-bottom: 30px;
 }
 
@@ -664,6 +679,26 @@
 
 .text-danger {
     color: #dc3545;
+}
+
+/* Единые состояния форм и таблиц */
+.form-group input:invalid:not(:placeholder-shown),
+.form-group select:invalid,
+.form-group textarea:invalid:not(:placeholder-shown) {
+    border-color: #ef4444;
+}
+
+.form-hint {
+    display: block;
+    margin-top: 6px;
+    color: var(--admin-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.admin-table a,
+.data-table a {
+    overflow-wrap: anywhere;
 }
 
 .text-warning {

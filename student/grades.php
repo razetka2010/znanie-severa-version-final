@@ -52,7 +52,7 @@ try {
             s.name as subject_name,
             s.id as subject_id,
             u.full_name as teacher_name,
-            gt.name as grade_type,
+            COALESCE(gw.weight, 1) AS grade_weight,
             DATE_FORMAT(g.lesson_date, '%Y-%m') as month,
             CASE 
                 WHEN MONTH(g.lesson_date) BETWEEN 9 AND 12 THEN 1
@@ -64,7 +64,7 @@ try {
         FROM grades g 
         JOIN subjects s ON g.subject_id = s.id 
         JOIN users u ON g.teacher_id = u.id 
-        LEFT JOIN grade_types gt ON g.grade_type_id = gt.id 
+        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
         WHERE g.student_id = ? 
     ";
 
@@ -104,6 +104,7 @@ try {
             $subject_grades[$subject_id] = [
                 'subject_name' => $grade['subject_name'],
                 'grades' => [],
+                'weighted_grades' => [],
                 'average' => 0,
                 'count' => 0
             ];
@@ -111,13 +112,23 @@ try {
 
         if (is_numeric($grade['grade_value'])) {
             $subject_grades[$subject_id]['grades'][] = $grade['grade_value'];
+            $subject_grades[$subject_id]['weighted_grades'][] = [
+                'value' => (float)$grade['grade_value'],
+                'weight' => (float)$grade['grade_weight']
+            ];
         }
     }
 
     // Рассчитываем средние баллы по предметам
     foreach ($subject_grades as $subject_id => &$data) {
         if (!empty($data['grades'])) {
-            $data['average'] = round(array_sum($data['grades']) / count($data['grades']), 2);
+            $weighted_sum = 0;
+            $weight_total = 0;
+            foreach ($data['weighted_grades'] as $weighted_grade) {
+                $weighted_sum += $weighted_grade['value'] * $weighted_grade['weight'];
+                $weight_total += $weighted_grade['weight'];
+            }
+            $data['average'] = $weight_total > 0 ? round($weighted_sum / $weight_total, 2) : 0;
             $data['count'] = count($data['grades']);
         }
     }
@@ -714,6 +725,7 @@ try {
             color: #6c757d;
         }
     </style>
+    <link rel="stylesheet" href="../css/student.css">
 </head>
 <body>
 <div class="dashboard-container">
@@ -947,9 +959,7 @@ try {
                             <th>Дата</th>
                             <th>Предмет</th>
                             <th>Оценка</th>
-                            <th>Тип</th>
                             <th>Учитель</th>
-                            <th>Комментарий</th>
                         </tr>
                         </thead>
                         <tbody>
@@ -961,23 +971,8 @@ try {
                                             <span class="grade-badge grade-<?= strtolower($grade['grade_value']) ?>">
                                                 <?= $grade['grade_value'] ?>
                                             </span>
-                                    <?php if ($grade['grade_weight'] && $grade['grade_weight'] != 1): ?>
-                                        <div class="grade-details">
-                                            вес: <?= $grade['grade_weight'] ?>
-                                        </div>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <?php if ($grade['grade_type']): ?>
-                                        <span class="grade-type"><?= $grade['grade_type'] ?></span>
-                                    <?php else: ?>
-                                        <span style="color: #7f8c8d;">—</span>
-                                    <?php endif; ?>
                                 </td>
                                 <td><?= htmlspecialchars($grade['teacher_name']) ?></td>
-                                <td>
-                                    <?= $grade['comments'] ? htmlspecialchars($grade['comments']) : '<span style="color: #7f8c8d;">—</span>' ?>
-                                </td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>

@@ -1,0 +1,17 @@
+<table border='1'>
+        <tr><th colspan='5' style='background: #ccc;'>Отчет об успеваемости за четверть</th></tr>
+        <tr><td colspan='5'>Класс: 1Б (1 класс)</td></tr>
+        <tr><td colspan='5'>Период: 01.09.2026 - 30.09.2026</td></tr>
+    <tr>
+            <th>Ученик</th>
+            <th>Кол-во оценок</th>
+            <th>Средний балл</th>
+            <th>Хорошие оценки</th>
+            <th>Плохие оценки</th>
+        </tr><tr>
+                <td>Artem Smirnov</td>
+                <td>5</td>
+                <td>4.2</td>
+                <td>5</td>
+                <td>0</td>
+            </tr></table>

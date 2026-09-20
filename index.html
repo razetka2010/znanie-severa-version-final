@@ -13,11 +13,21 @@
             box-sizing: border-box;
         }
 
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg-soft: #f4f8ff;
+            --text: #1f2937;
+            --muted: #64748b;
+            --card: #ffffff;
+            --line: #dfeafc;
+        }
+
         body {
-            font-family: 'Arial', sans-serif;
+            font-family: 'Segoe UI', Arial, sans-serif;
             line-height: 1.6;
-            color: #333;
-            background-color: #fff;
+            color: var(--text);
+            background: linear-gradient(180deg, #eef4ff 0%, #f8fafc 100%);
         }
 
         .container {
@@ -117,10 +127,19 @@
 
         /* Герой секция */
         .hero {
-            background: linear-gradient(135deg, #2c5aa0 0%, #3a7bd5 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 52%, #3b82f6 100%);
             color: white;
             padding: 120px 0 80px;
             margin-top: 60px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at top right, rgba(255,255,255,0.18), transparent 35%);
         }
 
         .hero-content {
@@ -155,15 +174,27 @@
 
         .placeholder-image {
             width: 100%;
-            max-width: 400px;
+            max-width: 420px;
             height: 300px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 10px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 22px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 4rem;
             backdrop-filter: blur(10px);
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
+            position: relative;
+            z-index: 1;
+        }
+
+        .placeholder-image img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 18px;
+            display: block;
         }
 
         /* О проекте */
@@ -238,18 +269,18 @@
         }
 
         .feature-card {
-            background: white;
+            background: var(--card);
             padding: 2.5rem 2rem;
-            border-radius: 10px;
+            border-radius: 18px;
             text-align: center;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-            transition: transform 0.3s;
-            border: 1px solid #e0e0e0;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+            transition: transform 0.22s ease, box-shadow 0.22s ease;
+            border: 1px solid var(--line);
         }
 
         .feature-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            transform: translateY(-4px);
+            box-shadow: 0 16px 32px rgba(37, 99, 235, 0.12);
         }
 
         .feature-icon {
@@ -484,7 +515,7 @@
                 </div>
             </div>
             <div class="hero-image">
-                <div class="placeholder-image"><img src="logo.png" height="300" width="300" alt=""></div>
+                <div class="placeholder-image"><img src="Знание Севера Эл. Журнал.png" height="300" width="300" alt=""></div>
             </div>
         </div>
     </div>
@@ -613,13 +644,13 @@
             </div>
             <div class="footer-contacts">
                 <p><strong>Техническая поддержка:</strong></p>
-                <p>support@znanie-severa.ru</p>
-                <p>+7 (XXX) XXX-XX-XX</p>
+                <p>znaniesevera.offical@gmail.com</p>
+                <p>+7 (937) 094-84-23</p>
                 <p>Пн-Пт: 9:00-18:00</p>
             </div>
         </div>
         <div class="footer-bottom">
-            <p>&copy; 2024 Электронный дневник "Знание Севера". Все права защищены.</p>
+            <p>&copy; 2026 Электронный дневник "Знание Севера". Все права защищены.</p>
         </div>
     </div>
 </footer>

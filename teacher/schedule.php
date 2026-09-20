@@ -462,13 +462,14 @@ if (isset($schedule_by_date[$today])) {
             border-left-color: #27ae60;
         }
     </style>
+    <link rel="stylesheet" href="../css/teacher.css">
 </head>
 <body>
 <div class="dashboard-container">
     <aside class="sidebar">
         <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Учитель</p>
+            <h1>Знание Севера</h1>
+            <p>Электронный дневник</p>
         </div>
         <nav class="sidebar-nav">
             <div class="user-info">
@@ -479,11 +480,12 @@ if (isset($schedule_by_date[$today])) {
                 <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
                 <li class="nav-section">Учебный процесс</li>
                 <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
+                <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
                 <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
                 <li><a href="schedule.php" class="nav-link active">📅 Моё расписание</a></li>
                 <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
                 <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li><a href="reports_advanced.php" class="nav-link">📈 Отчеты2</a></li>
+                <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
                 <li class="nav-section">Общее</li>
                 <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
                 <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>

@@ -31,9 +31,10 @@ $stats = [
 try {
     // Средняя оценка
     $stmt = $pdo->prepare("
-        SELECT AVG(CAST(grade_value AS DECIMAL)) as avg_grade 
-        FROM grades 
-        WHERE student_id = ? AND grade_value REGEXP '^[0-9]+$'
+        SELECT SUM(CAST(g.grade_value AS DECIMAL) * COALESCE(gw.weight, 1)) / NULLIF(SUM(COALESCE(gw.weight, 1)), 0) as avg_grade
+        FROM grades g
+        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
+        WHERE g.student_id = ? AND g.grade_value REGEXP '^[0-9]+$'
     ");
     $stmt->execute([$student_id]);
     $stats['average_grade'] = round($stmt->fetch()['avg_grade'] ?? 0, 2);
@@ -531,7 +532,134 @@ try {
             background: #3498db;
             border-radius: 4px;
         }
+
+        :root {
+            --bg: #f3f7ff;
+            --panel: #ffffff;
+            --panel-soft: #f8fafc;
+            --sidebar: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+            --primary: #2563eb;
+            --primary-strong: #1d4ed8;
+            --line: #e2e8f0;
+            --text: #1f2937;
+            --muted: #64748b;
+            --shadow: 0 12px 28px rgba(15, 23, 42, 0.10);
+        }
+
+        body {
+            background: linear-gradient(180deg, #eef4ff 0%, #f8fafc 100%);
+            color: var(--text);
+        }
+
+        .sidebar {
+            background: var(--sidebar);
+            box-shadow: 12px 0 30px rgba(15, 23, 42, 0.12);
+        }
+
+        .nav-link {
+            color: rgba(255,255,255,0.82);
+            border-radius: 0 12px 12px 0;
+            margin-right: 12px;
+            transition: all 0.25s ease;
+        }
+
+        .nav-link:hover,
+        .nav-link.active {
+            background: rgba(255,255,255,0.08);
+            border-left-color: #7dd3fc;
+            color: white;
+        }
+
+        .content-header {
+            background: rgba(255,255,255,0.95);
+            box-shadow: 0 2px 12px rgba(15, 23, 42, 0.05);
+        }
+
+        .stat-card,
+        .section,
+        .lesson-card,
+        .homework-card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            box-shadow: var(--shadow);
+        }
+
+        .stat-card {
+            border-left: 4px solid var(--primary);
+            padding: 24px 18px;
+            border-radius: 16px;
+            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .stat-icon {
+            width: 58px;
+            height: 58px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #60a5fa, #2563eb);
+            border-radius: 14px;
+            color: white;
+            margin-bottom: 0;
+            font-size: 1.8em;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            color: var(--text);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--muted);
+            font-size: 0.8rem;
+            margin-top: 4px;
+        }
+
+        .section {
+            border-radius: 18px;
+            padding: 25px;
+        }
+
+        .section-header {
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .data-table th {
+            background: var(--panel-soft);
+        }
+
+        .btn,
+        .btn-primary,
+        .btn-secondary {
+            border-radius: 10px;
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.16);
+        }
+
+        .btn,
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+            color: white;
+        }
+
+        .quick-action-btn {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        .quick-action-btn:hover {
+            border-color: rgba(37, 99, 235, 0.35);
+            transform: translateY(-3px);
+            box-shadow: 0 16px 28px rgba(37, 99, 235, 0.12);
+        }
     </style>
+    <link rel="stylesheet" href="../css/student.css">
 </head>
 <body>
 <div class="dashboard-container">
@@ -785,9 +913,10 @@ try {
                 try {
                     $stmt = $pdo->prepare("
                             SELECT s.name as subject_name, 
-                                   AVG(CAST(g.grade_value AS DECIMAL)) as avg_grade,
+                                SUM(CAST(g.grade_value AS DECIMAL) * COALESCE(gw.weight, 1)) / NULLIF(SUM(COALESCE(gw.weight, 1)), 0) as avg_grade,
                                    COUNT(g.id) as grade_count
-                            FROM grades g 
+                            FROM grades g
+                            LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
                             JOIN subjects s ON g.subject_id = s.id 
                             WHERE g.student_id = ? AND g.grade_value REGEXP '^[0-9]+$'
                             GROUP BY s.id, s.name 

@@ -46,22 +46,35 @@ try {
     error_log("Ошибка при получении роли ученика: " . $e->getMessage());
 }
 
-// Создаем таблицу для связи родителей и учеников если её нет
+// Создаем единую каноническую таблицу для связи родителей и учеников
 try {
     $pdo->exec("
-        CREATE TABLE IF NOT EXISTS parent_students (
+        CREATE TABLE IF NOT EXISTS student_parent_links (
             id INT PRIMARY KEY AUTO_INCREMENT,
             parent_id INT NOT NULL,
             student_id INT NOT NULL,
             relationship VARCHAR(50) DEFAULT 'родитель',
+            is_primary TINYINT(1) NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (parent_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
             UNIQUE KEY unique_parent_student (parent_id, student_id)
         )
     ");
+
+    // Миграция данных из legacy-таблиц, если они ещё существуют.
+    foreach (['student_parents', 'parent_students'] as $legacyTable) {
+        $legacyTableExists = $pdo->query("SHOW TABLES LIKE '$legacyTable'")->fetch();
+        if ($legacyTableExists) {
+            $pdo->exec("
+                INSERT IGNORE INTO student_parent_links (parent_id, student_id, relationship, is_primary, created_at)
+                SELECT parent_id, student_id, relationship, COALESCE(is_primary, 0), created_at
+                FROM $legacyTable
+            ");
+        }
+    }
 } catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы parent_students: " . $e->getMessage());
+    error_log("Ошибка при создании/миграции таблицы student_parent_links: " . $e->getMessage());
 }
 
 // Обработка добавления родителя
@@ -146,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $student_id = intval($student_id);
                     if ($student_id > 0) {
                         $stmt = $pdo->prepare("
-                            INSERT INTO parent_students (parent_id, student_id) 
+                            INSERT INTO student_parent_links (parent_id, student_id) 
                             VALUES (?, ?)
                         ");
                         $stmt->execute([$user_id, $student_id]);
@@ -210,7 +223,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Обновляем связи с учениками
                 // Сначала удаляем старые связи
-                $stmt = $pdo->prepare("DELETE FROM parent_students WHERE parent_id = ?");
+                $stmt = $pdo->prepare("DELETE FROM student_parent_links WHERE parent_id = ?");
                 $stmt->execute([$parent_id]);
 
                 // Добавляем новые связи
@@ -218,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $student_id = intval($student_id);
                     if ($student_id > 0) {
                         $stmt = $pdo->prepare("
-                            INSERT INTO parent_students (parent_id, student_id) 
+                            INSERT INTO student_parent_links (parent_id, student_id) 
                             VALUES (?, ?)
                         ");
                         $stmt->execute([$parent_id, $student_id]);
@@ -282,11 +295,11 @@ if (($action === 'edit' || $action === 'view') && $parent_id > 0) {
 
         // Получаем привязанных учеников
         $stmt = $pdo->prepare("
-            SELECT ps.student_id, u.full_name, c.name as class_name
-            FROM parent_students ps
-            JOIN users u ON ps.student_id = u.id
+            SELECT spl.student_id, u.full_name, c.name as class_name
+            FROM student_parent_links spl
+            JOIN users u ON spl.student_id = u.id
             LEFT JOIN classes c ON u.class_id = c.id
-            WHERE ps.parent_id = ?
+            WHERE spl.parent_id = ?
         ");
         $stmt->execute([$parent_id]);
         $parent_students = $stmt->fetchAll();
@@ -305,9 +318,9 @@ try {
     if ($parent_role_id) {
         $stmt = $pdo->prepare("
             SELECT u.*, 
-                   COUNT(ps.student_id) as student_count
+                   COUNT(spl.student_id) as student_count
             FROM users u
-            LEFT JOIN parent_students ps ON u.id = ps.parent_id
+            LEFT JOIN student_parent_links spl ON u.id = spl.parent_id
             WHERE u.school_id = ? AND u.role_id = ?
             GROUP BY u.id
             ORDER BY u.full_name
@@ -317,9 +330,9 @@ try {
         // Если роль не найдена, показываем всех пользователей школы
         $stmt = $pdo->prepare("
             SELECT u.*, 
-                   COUNT(ps.student_id) as student_count
+                   COUNT(spl.student_id) as student_count
             FROM users u
-            LEFT JOIN parent_students ps ON u.id = ps.parent_id
+            LEFT JOIN student_parent_links spl ON u.id = spl.parent_id
             WHERE u.school_id = ?
             GROUP BY u.id
             ORDER BY u.full_name

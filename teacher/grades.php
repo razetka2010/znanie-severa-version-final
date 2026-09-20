@@ -9,6 +9,20 @@ $pdo = getDatabaseConnection();
 $teacher_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
 
+// Совместимость с существующей базой: связываем оценки с настройками школы.
+try {
+    $grade_type_column = $pdo->query("SHOW COLUMNS FROM grades LIKE 'grade_type_id'")->fetch();
+    if (!$grade_type_column) {
+        $pdo->exec("ALTER TABLE grades ADD COLUMN grade_type_id INT NULL AFTER grade_value");
+    }
+    $grade_weight_column = $pdo->query("SHOW COLUMNS FROM grades LIKE 'grade_weight_id'")->fetch();
+    if (!$grade_weight_column) {
+        $pdo->exec("ALTER TABLE grades ADD COLUMN grade_weight_id INT NULL AFTER grade_type_id");
+    }
+} catch (PDOException $e) {
+    error_log('Ошибка обновления структуры grades: ' . $e->getMessage());
+}
+
 // Создаем таблицы если их нет
 try {
     // Таблица предметов
@@ -82,6 +96,23 @@ $teacher = $teacher_stmt->fetch();
 $selected_class_id = isset($_GET['class_id']) ? intval($_GET['class_id']) : 0;
 $selected_subject_id = isset($_GET['subject_id']) ? intval($_GET['subject_id']) : 0;
 
+$grade_types = [];
+$grade_weights = [];
+try {
+    $stmt = $pdo->prepare("SELECT id, name, min_score, max_score, color FROM grade_types WHERE school_id = ? AND is_active = 1 ORDER BY min_score DESC, name");
+    $stmt->execute([$school_id]);
+    $grade_types = $stmt->fetchAll();
+
+    $stmt = $pdo->prepare("SELECT id, name, weight FROM grade_weights WHERE school_id = ? AND is_active = 1 ORDER BY weight, name");
+    $stmt->execute([$school_id]);
+    $grade_weights = $stmt->fetchAll();
+} catch (PDOException $e) {
+    error_log('Ошибка получения настроек оценок: ' . $e->getMessage());
+}
+
+$default_grade_type_id = $grade_types[0]['id'] ?? null;
+$default_grade_weight_id = $grade_weights[0]['id'] ?? null;
+
 // Получаем предметы
 $subjects = [];
 try {
@@ -98,11 +129,10 @@ try {
     $stmt = $pdo->prepare("
         SELECT DISTINCT c.id, c.name, c.grade_level 
         FROM classes c 
-        JOIN schedule sch ON c.id = sch.class_id 
-        WHERE sch.teacher_id = ? AND sch.school_id = ?
+        WHERE c.school_id = ? AND c.is_active = 1
         ORDER BY c.grade_level, c.name
     ");
-    $stmt->execute([$teacher_id, $school_id]);
+    $stmt->execute([$school_id]);
     $classes = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении классов: " . $e->getMessage());
@@ -156,12 +186,15 @@ $existing_grades = [];
 if ($selected_class_id > 0 && $selected_subject_id > 0) {
     try {
         $stmt = $pdo->prepare("
-            SELECT g.*, u.full_name as student_name
+            SELECT g.*, u.full_name as student_name,
+                   gt.name AS grade_type_name, gw.name AS grade_weight_name, gw.weight AS grade_weight
             FROM grades g
             JOIN users u ON g.student_id = u.id
+            LEFT JOIN grade_types gt ON gt.id = g.grade_type_id AND gt.school_id = ?
+            LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.school_id = ?
             WHERE u.class_id = ? AND g.subject_id = ? AND g.teacher_id = ?
         ");
-        $stmt->execute([$selected_class_id, $selected_subject_id, $teacher_id]);
+        $stmt->execute([$school_id, $school_id, $selected_class_id, $selected_subject_id, $teacher_id]);
         $existing_grades = $stmt->fetchAll();
     } catch (PDOException $e) {
         error_log("Ошибка при получении оценок: " . $e->getMessage());
@@ -170,17 +203,59 @@ if ($selected_class_id > 0 && $selected_subject_id > 0) {
 
 // Обработка выставления оценки
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'set_grade') {
+    verify_csrf_token();
     $student_id = intval($_POST['student_id']);
     $lesson_date = $_POST['lesson_date'];
     $grade_value = !empty($_POST['grade_value']) ? trim($_POST['grade_value']) : null;
+    $grade_type_id = !empty($_POST['grade_type_id']) ? intval($_POST['grade_type_id']) : $default_grade_type_id;
+    $grade_weight_id = !empty($_POST['grade_weight_id']) ? intval($_POST['grade_weight_id']) : $default_grade_weight_id;
 
     try {
+        $allowed_grade_values = ['2', '3', '4', '5', 'Б', 'От', 'УП'];
+        if ($grade_value !== null && !in_array($grade_value, $allowed_grade_values, true)) {
+            throw new InvalidArgumentException('Недопустимое значение оценки.');
+        }
+
+        $type_stmt = $pdo->prepare("SELECT min_score, max_score FROM grade_types WHERE id = ? AND school_id = ? AND is_active = 1");
+        $type_stmt->execute([$grade_type_id, $school_id]);
+        $grade_type = $type_stmt->fetch();
+        if (!$grade_type) {
+            throw new InvalidArgumentException('Выберите активный тип оценки.');
+        }
+        $weight_stmt = $pdo->prepare("SELECT id FROM grade_weights WHERE id = ? AND school_id = ? AND is_active = 1");
+        $weight_stmt->execute([$grade_weight_id, $school_id]);
+        if (!$weight_stmt->fetchColumn()) {
+            throw new InvalidArgumentException('Выберите активный вес оценки.');
+        }
+        if ($grade_value !== null && is_numeric($grade_value) && ((int)$grade_value < $grade_type['min_score'] || (int)$grade_value > $grade_type['max_score'])) {
+            throw new InvalidArgumentException('Оценка не входит в диапазон выбранного типа.');
+        }
+
+        $date_object = DateTime::createFromFormat('Y-m-d', $lesson_date);
+        if (!$date_object || $date_object->format('Y-m-d') !== $lesson_date) {
+            throw new InvalidArgumentException('Некорректная дата урока.');
+        }
+
+        $access_stmt = $pdo->prepare("\n            SELECT 1\n            FROM users student\n            JOIN schedule sch ON sch.class_id = student.class_id\n                AND sch.subject_id = ?\n                AND sch.teacher_id = ?\n                AND sch.school_id = ?\n                AND sch.lesson_date = ?\n            WHERE student.id = ?\n                AND student.class_id = ?\n                AND student.school_id = ?\n                AND student.is_active = 1\n            LIMIT 1\n        ");
+        $access_stmt->execute([
+            $selected_subject_id,
+            $teacher_id,
+            $school_id,
+            $lesson_date,
+            $student_id,
+            $selected_class_id,
+            $school_id
+        ]);
+        if (!$access_stmt->fetchColumn()) {
+            throw new InvalidArgumentException('У вас нет права выставлять оценку этому ученику на выбранном уроке.');
+        }
+
         // Проверяем, есть ли уже оценка
         $check_stmt = $pdo->prepare("
             SELECT id FROM grades 
-            WHERE student_id = ? AND subject_id = ? AND lesson_date = ?
+            WHERE student_id = ? AND teacher_id = ? AND subject_id = ? AND lesson_date = ?
         ");
-        $check_stmt->execute([$student_id, $selected_subject_id, $lesson_date]);
+        $check_stmt->execute([$student_id, $teacher_id, $selected_subject_id, $lesson_date]);
         $existing_grade = $check_stmt->fetch();
 
         if ($existing_grade) {
@@ -188,10 +263,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 // Обновляем существующую оценку
                 $stmt = $pdo->prepare("
                     UPDATE grades 
-                    SET grade_value = ?, updated_at = NOW()
+                    SET grade_value = ?, grade_type_id = ?, grade_weight_id = ?, updated_at = NOW()
                     WHERE id = ?
                 ");
-                $stmt->execute([$grade_value, $existing_grade['id']]);
+                $stmt->execute([$grade_value, $grade_type_id, $grade_weight_id, $existing_grade['id']]);
             } else {
                 // Удаляем оценку
                 $stmt = $pdo->prepare("DELETE FROM grades WHERE id = ?");
@@ -201,14 +276,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             if ($grade_value) {
                 // Добавляем новую оценку
                 $stmt = $pdo->prepare("
-                    INSERT INTO grades (student_id, teacher_id, subject_id, grade_value, lesson_date, created_at) 
-                    VALUES (?, ?, ?, ?, ?, NOW())
+                    INSERT INTO grades (student_id, teacher_id, subject_id, grade_value, grade_type_id, grade_weight_id, lesson_date, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
                 ");
-                $stmt->execute([$student_id, $teacher_id, $selected_subject_id, $grade_value, $lesson_date]);
+                $stmt->execute([$student_id, $teacher_id, $selected_subject_id, $grade_value, $grade_type_id, $grade_weight_id, $lesson_date]);
             }
         }
 
+        logUserAction($pdo, 'grade_changed', json_encode([
+            'student_id' => $student_id,
+            'subject_id' => $selected_subject_id,
+            'lesson_date' => $lesson_date,
+            'value' => $grade_value
+        ], JSON_UNESCAPED_UNICODE));
+
         $_SESSION['success_message'] = "Оценка успешно сохранена!";
+        header('Location: grades.php?class_id=' . $selected_class_id . '&subject_id=' . $selected_subject_id);
+        exit;
+    } catch (InvalidArgumentException $e) {
+        $_SESSION['error_message'] = $e->getMessage();
         header('Location: grades.php?class_id=' . $selected_class_id . '&subject_id=' . $selected_subject_id);
         exit;
     } catch (PDOException $e) {
@@ -226,8 +312,14 @@ foreach ($class_students as $student) {
     });
 
     if (count($student_grades) > 0) {
-        $sum = array_sum(array_column($student_grades, 'grade_value'));
-        $student_averages[$student['id']] = round($sum / count($student_grades), 2);
+        $weighted_sum = 0;
+        $weight_total = 0;
+        foreach ($student_grades as $student_grade) {
+            $weight = (float)($student_grade['grade_weight'] ?? 1);
+            $weighted_sum += (float)$student_grade['grade_value'] * $weight;
+            $weight_total += $weight;
+        }
+        $student_averages[$student['id']] = $weight_total > 0 ? round($weighted_sum / $weight_total, 2) : null;
     } else {
         $student_averages[$student['id']] = null;
     }
@@ -707,14 +799,15 @@ foreach ($class_students as $student) {
             justify-content: center;
         }
     </style>
+    <link rel="stylesheet" href="../css/teacher.css">
 </head>
 <body>
 <div class="dashboard-container">
     <aside class="sidebar">
         <!-- Боковая панель как в dashboard.php -->
         <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Учитель</p>
+            <h1>Знание Севера</h1>
+            <p>Электронный дневник</p>
         </div>
         <nav class="sidebar-nav">
             <div class="user-info">
@@ -725,11 +818,12 @@ foreach ($class_students as $student) {
                 <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
                 <li class="nav-section">Учебный процесс</li>
                 <li><a href="grades.php" class="nav-link active">📝 Журнал оценок</a></li>
+                <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
                 <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
                 <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
                 <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
                 <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li><a href="reports_advanced.php" class="nav-link">📈 Отчеты2</a></li>
+                <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
                 <li class="nav-section">Общее</li>
                 <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
                 <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
@@ -857,9 +951,19 @@ foreach ($class_students as $student) {
                                         ?>
                                         <td>
                                             <form method="POST" class="grade-form">
+                                                <?php echo csrf_field(); ?>
                                                 <input type="hidden" name="action" value="set_grade">
                                                 <input type="hidden" name="student_id" value="<?= $student['id'] ?>">
                                                 <input type="hidden" name="lesson_date" value="<?= $date['full_date'] ?>">
+                                                <?php
+                                                $current_grade = null;
+                                                foreach ($existing_grades as $grade) {
+                                                    if ($grade['student_id'] == $student['id'] && $grade['lesson_date'] == $date['full_date']) {
+                                                        $current_grade = $grade;
+                                                        break;
+                                                    }
+                                                }
+                                                ?>
                                                 <select name="grade_value" class="grade-select <?= $grade_value ? 'option-' . htmlspecialchars($grade_value) : 'empty' ?>" onchange="this.form.submit()">
                                                     <option value="">...</option>
                                                     <option value="5" <?= $grade_value == '5' ? 'selected' : '' ?>>5</option>
@@ -869,6 +973,16 @@ foreach ($class_students as $student) {
                                                     <option value="Б" <?= $grade_value == 'Б' ? 'selected' : '' ?>>Б</option>
                                                     <option value="От" <?= $grade_value == 'От' ? 'selected' : '' ?>>От</option>
                                                     <option value="УП" <?= $grade_value == 'УП' ? 'selected' : '' ?>>УП</option>
+                                                </select>
+                                                <select name="grade_type_id" class="grade-meta-select" title="Тип оценки">
+                                                    <?php foreach ($grade_types as $grade_type): ?>
+                                                        <option value="<?= $grade_type['id'] ?>" <?= ((int)($current_grade['grade_type_id'] ?? $default_grade_type_id) === (int)$grade_type['id']) ? 'selected' : '' ?>><?= htmlspecialchars($grade_type['name']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                                <select name="grade_weight_id" class="grade-meta-select" title="Вес оценки">
+                                                    <?php foreach ($grade_weights as $grade_weight): ?>
+                                                        <option value="<?= $grade_weight['id'] ?>" <?= ((int)($current_grade['grade_weight_id'] ?? $default_grade_weight_id) === (int)$grade_weight['id']) ? 'selected' : '' ?>><?= htmlspecialchars($grade_weight['name']) ?> (<?= $grade_weight['weight'] ?>)</option>
+                                                    <?php endforeach; ?>
                                                 </select>
                                             </form>
                                         </td>

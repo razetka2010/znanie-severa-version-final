@@ -40,6 +40,10 @@ try {
             FOREIGN KEY (class_teacher_id) REFERENCES users(id) ON DELETE SET NULL
         )
     ");
+    $active_column = $pdo->query("SHOW COLUMNS FROM classes LIKE 'is_active'")->fetch();
+    if (!$active_column) {
+        $pdo->exec("ALTER TABLE classes ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER class_teacher_id");
+    }
 } catch (PDOException $e) {
     error_log("Ошибка при создании таблицы classes: " . $e->getMessage());
 }

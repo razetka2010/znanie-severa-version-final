@@ -2,11 +2,18 @@
 session_start();
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once '../config/report_files.php';
 
 // Проверка прав - только school_admin
 requireSchoolAdmin();
 
 $pdo = getDatabaseConnection();
+
+try {
+    ensureReportFilesSchema($pdo);
+} catch (PDOException $e) {
+    error_log('Ошибка подготовки таблицы report_files: ' . $e->getMessage());
+}
 
 // Получаем school_id из сессии с проверкой
 $school_id = $_SESSION['user_school_id'] ?? null;
@@ -164,15 +171,17 @@ if (isset($_GET['delete_file'])) {
     exit;
 }
 
-// Получение списка прикрепленных файлов (только файлы текущего пользователя)
+// Получение отчётов своей школы и системных отчётов супер-администратора
 $stmt = $pdo->prepare("
-    SELECT rf.*, u.full_name as uploaded_by_name, u.login as uploaded_by_login 
-    FROM report_files rf 
-    JOIN users u ON rf.uploaded_by = u.id 
-    WHERE rf.uploaded_by = ?
+    SELECT rf.*, u.full_name as uploaded_by_name, u.login as uploaded_by_login,
+           r.name as uploaded_by_role
+    FROM report_files rf
+    JOIN users u ON rf.uploaded_by = u.id
+    JOIN roles r ON u.role_id = r.id
+    WHERE u.school_id = ? OR r.name = 'super_admin'
     ORDER BY rf.created_at DESC
 ");
-$stmt->execute([$_SESSION['user_id']]);
+$stmt->execute([$school_id]);
 $files = $stmt->fetchAll();
 
 // Получение списка пользователей школы
@@ -192,7 +201,7 @@ $school_users = $stmt->fetchAll();
         <link rel="shortcut icon" href="../logo.png" />
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Отчеты - Знание Севера</title>
+        <title>Отчёты школы - Знание Севера</title>
         <link rel="stylesheet" href="../css/dashboard.css">
         <style>
             .stats-section {
@@ -460,6 +469,7 @@ $school_users = $stmt->fetchAll();
                             <th>Размер</th>
                             <th>Тип</th>
                             <th>Описание</th>
+                            <th>Загрузил</th>
                             <th>Дата загрузки</th>
                             <th>Действия</th>
                         </tr>
@@ -467,7 +477,7 @@ $school_users = $stmt->fetchAll();
                         <tbody>
                         <?php if (empty($files)): ?>
                             <tr>
-                                <td colspan="6" style="text-align: center; padding: 20px; color: #666;">
+                                <td colspan="7" style="text-align: center; padding: 20px; color: #666;">
                                     Нет прикрепленных файлов
                                 </td>
                             </tr>
@@ -478,14 +488,17 @@ $school_users = $stmt->fetchAll();
                                     <td><?php echo formatFileSize($file['file_size']); ?></td>
                                     <td><?php echo htmlspecialchars($file['file_type']); ?></td>
                                     <td><?php echo $file['description'] ? htmlspecialchars($file['description']) : '—'; ?></td>
+                                    <td><?php echo htmlspecialchars($file['uploaded_by_name']); ?><?php echo $file['uploaded_by_role'] === 'super_admin' ? ' (система)' : ''; ?></td>
                                     <td><?php echo date('d.m.Y H:i', strtotime($file['created_at'])); ?></td>
                                     <td>
                                         <div class="file-actions">
                                             <a href="../uploads/reports/<?php echo htmlspecialchars($file['filename']); ?>"
                                                download="<?php echo htmlspecialchars($file['original_name']); ?>"
                                                class="btn-action">📥</a>
-                                            <button onclick="confirmDeleteFile(<?php echo $file['id']; ?>)"
+                                                <?php if ((int)$file['uploaded_by'] === (int)$_SESSION['user_id']): ?>
+                                                <button onclick="confirmDeleteFile(<?php echo $file['id']; ?>)"
                                                     class="btn-action">🗑️</button>
+                                                <?php endif; ?>
                                         </div>
                                     </td>
                                 </tr>

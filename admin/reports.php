@@ -1,6 +1,14 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/report_files.php';
+
+// Системные отчёты доступны только супер-администратору.
+// Школьный администратор использует отдельный отчётный раздел своей школы.
+if (($_SESSION['user_role'] ?? null) === 'school_admin') {
+    header('Location: ../school_admin/reports.php');
+    exit;
+}
 
 // Проверка авторизации
 if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'super_admin') {
@@ -9,6 +17,12 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'super_admin') {
 }
 
 $pdo = getDatabaseConnection();
+
+try {
+    ensureReportFilesSchema($pdo);
+} catch (PDOException $e) {
+    error_log('Ошибка подготовки таблицы report_files: ' . $e->getMessage());
+}
 
 // Получение статистики для дашборда
 $stats = [];

@@ -1,12 +1,9 @@
 <?php
 session_start();
 require_once 'config/database.php';
+require_once 'config/auth.php';
 
-// Проверка авторизации
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit;
-}
+requireAuth();
 
 $pdo = getDatabaseConnection();
 $user_id = $_SESSION['user_id'];
@@ -30,6 +27,7 @@ if (!$user) {
 
 // Обработка обновления профиля
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf_token();
     if (isset($_POST['update_profile'])) {
         $full_name = trim($_POST['full_name']);
         $email = trim($_POST['email']);
@@ -64,6 +62,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     WHERE id = ?
                 ");
                 $stmt->execute([$full_name, $email, $phone, $position, $user_id]);
+
+                logUserAction($pdo, 'profile_updated', json_encode([
+                    'fields' => ['full_name', 'email', 'phone', 'position']
+                ], JSON_UNESCAPED_UNICODE));
 
                 // Обновляем данные в сессии
                 $_SESSION['user_name'] = $full_name;
@@ -153,6 +155,7 @@ try {
     $stmt = $pdo->prepare("SELECT COUNT(*) as total_logins FROM user_sessions WHERE user_id = ?");
     $stmt->execute([$user_id]);
     $result = $stmt->fetch();
+    $activity_stats['total_logins'] = $result ? $result['total_logins'] : 0;
 
 } catch (PDOException $e) {
     // Если произошла ошибка, устанавливаем значения по умолчанию
@@ -187,8 +190,8 @@ try {
             </div>
 
             <ul class="nav-menu">
-                <li><a href="admin/super_dashboard.php" class="nav-link">📊 Обзор</a></li>
                 <?php if ($_SESSION['user_role'] === 'super_admin'): ?>
+                    <li><a href="admin/super_dashboard.php" class="nav-link">📊 Обзор</a></li>
                     <li class="nav-section">Администрирование</li>
                     <li><a href="admin/schools.php" class="nav-link">🏫 Учебные заведения</a></li>
                     <li><a href="admin/users.php" class="nav-link">👥 Пользователи</a></li>
@@ -196,6 +199,16 @@ try {
                     <li><a href="admin/curriculum.php" class="nav-link">📚 Учебные планы</a></li>
                     <li><a href="admin/academic_periods.php" class="nav-link">📅 Учебные периоды</a></li>
                     <li><a href="admin/reports.php" class="nav-link">📈 Отчеты</a></li>
+                <?php elseif ($_SESSION['user_role'] === 'school_admin'): ?>
+                    <li><a href="school_admin/dashboard.php" class="nav-link">📊 Обзор</a></li>
+                    <li><a href="school_admin/reports.php" class="nav-link">📈 Отчеты школы</a></li>
+                <?php elseif (in_array($_SESSION['user_role'], ['teacher', 'class_teacher'])): ?>
+                    <li><a href="teacher/dashboard.php" class="nav-link">📊 Обзор</a></li>
+                    <li><a href="teacher/reports.php" class="nav-link">📈 Отчеты</a></li>
+                <?php elseif ($_SESSION['user_role'] === 'student'): ?>
+                    <li><a href="student/dashboard.php" class="nav-link">📊 Обзор</a></li>
+                <?php elseif ($_SESSION['user_role'] === 'parent'): ?>
+                    <li><a href="parent/dashboard.php" class="nav-link">📊 Обзор</a></li>
                 <?php endif; ?>
                 <li class="nav-section">Общее</li>
                 <li><a href="profile.php" class="nav-link active">👤 Профиль</a></li>
@@ -292,6 +305,7 @@ try {
                     </div>
                     <div class="form-card">
                         <form method="POST">
+                            <?php echo csrf_field(); ?>
                             <input type="hidden" name="update_profile" value="1">
 
                             <div class="form-grid">
@@ -343,6 +357,7 @@ try {
                     </div>
                     <div class="form-card">
                         <form method="POST">
+                            <?php echo csrf_field(); ?>
                             <input type="hidden" name="change_password" value="1">
 
                             <div class="form-grid">

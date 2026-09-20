@@ -1,1165 +1,465 @@
--- phpMyAdmin SQL Dump
--- version 4.9.0.1
--- https://www.phpmyadmin.net/
---
--- Хост: sql105.infinityfree.com
--- Время создания: Ноя 30 2025 г., 04:33
--- Версия сервера: 11.4.7-MariaDB
--- Версия PHP: 7.2.22
-
-SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
-SET AUTOCOMMIT = 0;
-START TRANSACTION;
-SET time_zone = "+00:00";
-
-
-/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
-/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
-/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
-/*!40101 SET NAMES utf8mb4 */;
-
---
--- База данных: `if0_40537678_school_diary`
---
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `academic_periods`
---
-
-CREATE TABLE `academic_periods` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `name` varchar(255) NOT NULL,
-  `start_date` date NOT NULL,
-  `end_date` date NOT NULL,
-  `is_current` tinyint(1) DEFAULT 0,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `attendance`
---
-
-CREATE TABLE `attendance` (
-  `id` int(11) NOT NULL,
-  `student_id` int(11) NOT NULL,
-  `teacher_id` int(11) NOT NULL,
-  `class_id` int(11) NOT NULL,
-  `lesson_date` date NOT NULL,
-  `status` enum('present','absent','late') DEFAULT 'present',
-  `reason` varchar(255) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `classes`
---
-
-CREATE TABLE `classes` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `name` varchar(50) NOT NULL,
-  `grade_level` int(11) NOT NULL,
-  `class_teacher_id` int(11) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Дамп данных таблицы `classes`
---
-
-INSERT INTO `classes` (`id`, `school_id`, `name`, `grade_level`, `class_teacher_id`, `created_at`) VALUES
-(4, 6, '9Б', 9, 16, '2025-11-22 10:57:19');
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `class_curriculum`
---
-
-CREATE TABLE `class_curriculum` (
-  `id` int(11) NOT NULL,
-  `class_id` int(11) NOT NULL,
-  `subject_name` varchar(255) NOT NULL,
-  `hours_per_week` int(11) NOT NULL,
-  `hours_per_year` int(11) NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `curriculum`
---
-
-CREATE TABLE `curriculum` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `name` varchar(255) NOT NULL,
-  `description` text DEFAULT NULL,
-  `grades` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL
-) ;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `grades`
---
-
-CREATE TABLE `grades` (
-  `id` int(11) NOT NULL,
-  `student_id` int(11) NOT NULL,
-  `teacher_id` int(11) NOT NULL,
-  `subject_id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `grade_value` varchar(10) DEFAULT NULL,
-  `lesson_date` date NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `grade_types`
---
-
-CREATE TABLE `grade_types` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `name` varchar(100) NOT NULL,
-  `weight` int(11) NOT NULL DEFAULT 10,
-  `description` text DEFAULT NULL,
-  `min_value` decimal(5,2) DEFAULT 0.00,
-  `max_value` decimal(5,2) DEFAULT 5.00,
-  `is_numeric` tinyint(1) DEFAULT 1,
-  `color` varchar(7) DEFAULT '#667eea',
-  `display_order` int(11) DEFAULT 0,
-  `is_active` tinyint(1) DEFAULT 1,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `min_score` int(11) NOT NULL DEFAULT 0,
-  `max_score` int(11) NOT NULL DEFAULT 5
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Дамп данных таблицы `grade_types`
---
-
-INSERT INTO `grade_types` (`id`, `school_id`, `name`, `weight`, `description`, `min_value`, `max_value`, `is_numeric`, `color`, `display_order`, `is_active`, `created_at`, `updated_at`, `min_score`, `max_score`) VALUES
-(1, 5, 'Самостоятельная работа', 20, 'Краткая проверочная работа на уроке', '0.00', '5.00', 1, '#667eea', 0, 1, '2025-11-19 20:25:49', '2025-11-20 05:08:47', 0, 5),
-(2, 5, 'Контрольная работа', 30, 'Полноценная контрольная работа', '0.00', '5.00', 1, '#667eea', 0, 1, '2025-11-19 20:25:49', '2025-11-20 05:08:47', 0, 5),
-(3, 5, 'Лабораторная работа', 20, 'Практическая лабораторная работа', '0.00', '5.00', 1, '#667eea', 0, 1, '2025-11-19 20:25:49', '2025-11-20 05:08:47', 0, 5),
-(4, 5, 'Сочинение', 30, 'Письменная творческая работа', '0.00', '5.00', 1, '#667eea', 0, 1, '2025-11-19 20:25:49', '2025-11-20 05:08:47', 0, 5),
-(5, 5, 'Изложение', 30, 'Письменная работа по тексту', '0.00', '5.00', 1, '#667eea', 0, 1, '2025-11-19 20:25:49', '2025-11-20 05:08:47', 0, 5),
-(6, 5, 'Домашнее задание', 10, 'Регулярное домашнее задание', '0.00', '5.00', 1, '#667eea', 0, 1, '2025-11-19 20:25:49', '2025-11-20 05:08:47', 0, 5),
-(7, 5, 'Ответ на уроке', 10, 'Устный ответ на уроке', '0.00', '5.00', 1, '#667eea', 0, 1, '2025-11-19 20:25:49', '2025-11-20 05:08:47', 0, 5);
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `grade_weights`
---
-
-CREATE TABLE `grade_weights` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `name` varchar(100) NOT NULL,
-  `short_name` varchar(20) NOT NULL,
-  `weight` int(11) NOT NULL DEFAULT 10,
-  `description` text DEFAULT NULL,
-  `color` varchar(7) DEFAULT '#667eea',
-  `is_active` tinyint(1) DEFAULT 1,
-  `display_order` int(11) DEFAULT 0,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `homework`
---
-
-CREATE TABLE `homework` (
-  `id` int(11) NOT NULL,
-  `teacher_id` int(11) NOT NULL,
-  `class_id` int(11) NOT NULL,
-  `subject_id` int(11) NOT NULL,
-  `title` varchar(255) NOT NULL,
-  `description` text DEFAULT NULL,
-  `due_date` date DEFAULT NULL,
-  `attachment_path` varchar(500) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `homework_completion`
---
-
-CREATE TABLE `homework_completion` (
-  `id` int(11) NOT NULL,
-  `homework_id` int(11) NOT NULL,
-  `student_id` int(11) NOT NULL,
-  `completed_at` timestamp NULL DEFAULT NULL,
-  `student_comment` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `parents`
---
-
-CREATE TABLE `parents` (
-  `id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `student_id` int(11) NOT NULL,
-  `relationship` enum('mother','father','guardian') DEFAULT NULL,
-  `full_name` varchar(255) NOT NULL,
-  `phone` varchar(20) DEFAULT NULL,
-  `email` varchar(100) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `parent_students`
---
-
-CREATE TABLE `parent_students` (
-  `id` int(11) NOT NULL,
-  `parent_id` int(11) NOT NULL,
-  `student_id` int(11) NOT NULL,
-  `relationship` varchar(50) DEFAULT 'родитель',
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `report_files`
---
-
-CREATE TABLE `report_files` (
-  `id` int(11) NOT NULL,
-  `filename` varchar(255) NOT NULL,
-  `original_name` varchar(255) NOT NULL,
-  `file_size` int(11) NOT NULL,
-  `file_type` varchar(100) NOT NULL,
-  `description` text DEFAULT NULL,
-  `uploaded_by` int(11) NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `roles`
---
-
-CREATE TABLE `roles` (
-  `id` int(11) NOT NULL,
-  `name` varchar(50) NOT NULL,
-  `description` text DEFAULT NULL,
-  `permissions` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Дамп данных таблицы `roles`
---
-
-INSERT INTO `roles` (`id`, `name`, `description`, `permissions`, `created_at`) VALUES
-(1, 'super_admin', 'Главный администратор системы', '[\"view_dashboard\",\"manage_profile\",\"view_schools\",\"manage_schools\",\"view_users\",\"manage_users\",\"reset_passwords\",\"view_roles\",\"manage_roles\",\"view_curriculum\",\"manage_curriculum\",\"view_academic_periods\",\"manage_academic_periods\",\"view_classes\",\"manage_classes\",\"view_subjects\",\"manage_subjects\",\"view_students\",\"manage_grades\",\"manage_homework\",\"view_attendance\",\"manage_attendance\",\"view_reports\",\"generate_reports\",\"export_data\"]', '2025-11-16 20:44:48'),
-(2, 'school_admin', 'Администратор школы', '[\"view_dashboard\",\"manage_profile\",\"view_schools\",\"manage_schools\",\"view_users\",\"manage_users\",\"reset_passwords\",\"view_roles\",\"manage_roles\",\"view_curriculum\",\"manage_curriculum\",\"view_academic_periods\",\"manage_academic_periods\",\"view_reports\",\"generate_reports\",\"export_data\"]', '2025-11-16 20:44:48'),
-(3, 'teacher', 'Учитель', '[\"view_dashboard\",\"manage_profile\",\"view_students\",\"manage_grades\",\"manage_homework\",\"view_attendance\",\"manage_attendance\"]', '2025-11-16 20:44:48'),
-(5, 'student', 'Ученик', '[\"view_dashboard\",\"manage_profile\"]', '2025-11-16 20:44:48'),
-(24, 'parent', 'Родитель', NULL, '2025-11-19 20:38:18');
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `schedule`
---
-
-CREATE TABLE `schedule` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `class_id` int(11) NOT NULL,
-  `subject_id` int(11) NOT NULL,
-  `teacher_id` int(11) NOT NULL,
-  `lesson_date` date NOT NULL,
-  `lesson_number` int(11) DEFAULT NULL,
-  `room` varchar(20) DEFAULT NULL,
-  `is_completed` tinyint(1) DEFAULT 0,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Дамп данных таблицы `schedule`
---
-
-INSERT INTO `schedule` (`id`, `school_id`, `class_id`, `subject_id`, `teacher_id`, `lesson_date`, `lesson_number`, `room`, `is_completed`, `created_at`) VALUES
-(2, 6, 4, 28, 16, '2025-12-01', 5, '205', 0, '2025-11-25 19:12:02'),
-(3, 6, 4, 28, 16, '2025-12-03', 5, '205', 0, '2025-11-25 19:12:02'),
-(4, 6, 4, 28, 16, '2025-12-05', 5, '205', 0, '2025-11-25 19:12:02'),
-(5, 6, 4, 28, 16, '2025-12-08', 5, '205', 0, '2025-11-25 19:12:02'),
-(6, 6, 4, 28, 16, '2025-12-10', 5, '205', 0, '2025-11-25 19:12:02'),
-(7, 6, 4, 28, 16, '2025-12-12', 5, '205', 0, '2025-11-25 19:12:02'),
-(8, 6, 4, 28, 16, '2025-12-15', 5, '205', 0, '2025-11-25 19:12:02'),
-(9, 6, 4, 28, 16, '2025-12-17', 5, '205', 0, '2025-11-25 19:12:02'),
-(10, 6, 4, 28, 16, '2025-12-19', 5, '205', 0, '2025-11-25 19:12:02'),
-(11, 6, 4, 28, 16, '2025-12-22', 5, '205', 0, '2025-11-25 19:12:02'),
-(12, 6, 4, 28, 16, '2025-12-24', 5, '205', 0, '2025-11-25 19:12:02'),
-(13, 6, 4, 28, 16, '2025-12-26', 5, '205', 0, '2025-11-25 19:12:02'),
-(14, 6, 4, 28, 16, '2025-12-29', 5, '205', 0, '2025-11-25 19:12:02'),
-(15, 6, 4, 28, 16, '2025-12-31', 5, '205', 0, '2025-11-25 19:12:02'),
-(16, 6, 4, 28, 16, '2025-12-02', 7, '205', 0, '2025-11-25 19:14:43'),
-(17, 6, 4, 28, 16, '2025-12-03', 7, '205', 0, '2025-11-25 19:14:43'),
-(18, 6, 4, 28, 16, '2025-12-05', 7, '205', 0, '2025-11-25 19:14:43'),
-(19, 6, 4, 28, 16, '2025-12-09', 7, '205', 0, '2025-11-25 19:14:43'),
-(20, 6, 4, 28, 16, '2025-12-10', 7, '205', 0, '2025-11-25 19:14:43'),
-(21, 6, 4, 28, 16, '2025-12-12', 7, '205', 0, '2025-11-25 19:14:43'),
-(22, 6, 4, 28, 16, '2025-12-16', 7, '205', 0, '2025-11-25 19:14:43'),
-(23, 6, 4, 28, 16, '2025-12-17', 7, '205', 0, '2025-11-25 19:14:43'),
-(24, 6, 4, 28, 16, '2025-12-19', 7, '205', 0, '2025-11-25 19:14:43'),
-(25, 6, 4, 28, 16, '2025-12-23', 7, '205', 0, '2025-11-25 19:14:43'),
-(26, 6, 4, 28, 16, '2025-12-24', 7, '205', 0, '2025-11-25 19:14:43'),
-(27, 6, 4, 28, 16, '2025-12-26', 7, '205', 0, '2025-11-25 19:14:43'),
-(28, 6, 4, 28, 16, '2025-12-30', 7, '205', 0, '2025-11-25 19:14:43'),
-(29, 6, 4, 28, 16, '2025-12-31', 7, '205', 0, '2025-11-25 19:14:43');
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `schools`
---
+﻿DROP DATABASE IF EXISTS `if0_40537678_school_diary`;
+CREATE DATABASE `if0_40537678_school_diary` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `if0_40537678_school_diary`;
 
 CREATE TABLE `schools` (
-  `id` int(11) NOT NULL,
-  `full_name` varchar(255) NOT NULL,
-  `short_name` varchar(100) DEFAULT NULL,
-  `inn` varchar(20) NOT NULL,
-  `type` enum('общеобразовательная','гимназия','лицей','интернат') DEFAULT 'общеобразовательная',
-  `status` enum('активная','неактивная','архив') DEFAULT 'активная',
-  `legal_address` text DEFAULT NULL,
-  `physical_address` text DEFAULT NULL,
-  `phone` varchar(20) DEFAULT NULL,
-  `email` varchar(100) DEFAULT NULL,
-  `website` varchar(100) DEFAULT NULL,
-  `director_name` varchar(100) DEFAULT NULL,
-  `license_number` varchar(50) DEFAULT NULL,
-  `license_date` date DEFAULT NULL,
-  `license_issued_by` varchar(255) DEFAULT NULL,
-  `accreditation_number` varchar(50) DEFAULT NULL,
-  `accreditation_date` date DEFAULT NULL,
-  `accreditation_until` date DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `full_name` VARCHAR(255) NOT NULL,
+  `short_name` VARCHAR(100) DEFAULT NULL,
+  `inn` VARCHAR(20) DEFAULT NULL,
+  `type` ENUM('obshcheobrazovatelnaya','gymnasium','lyceum','internat') DEFAULT 'obshcheobrazovatelnaya',
+  `status` ENUM('active','inactive','archive') DEFAULT 'active',
+  `legal_address` TEXT DEFAULT NULL,
+  `physical_address` TEXT DEFAULT NULL,
+  `phone` VARCHAR(20) DEFAULT NULL,
+  `email` VARCHAR(100) DEFAULT NULL,
+  `website` VARCHAR(100) DEFAULT NULL,
+  `director_name` VARCHAR(100) DEFAULT NULL,
+  `license_number` VARCHAR(50) DEFAULT NULL,
+  `license_date` DATE DEFAULT NULL,
+  `license_issued_by` VARCHAR(255) DEFAULT NULL,
+  `accreditation_number` VARCHAR(50) DEFAULT NULL,
+  `accreditation_date` DATE DEFAULT NULL,
+  `accreditation_until` DATE DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---
--- Дамп данных таблицы `schools`
---
-
-INSERT INTO `schools` (`id`, `full_name`, `short_name`, `inn`, `type`, `status`, `legal_address`, `physical_address`, `phone`, `email`, `website`, `director_name`, `license_number`, `license_date`, `license_issued_by`, `accreditation_number`, `accreditation_date`, `accreditation_until`, `created_at`, `updated_at`) VALUES
-(6, 'Муниципальное бюджетное общеобразовательное учреждение \"Средняя школа №11\"', 'МБОУ СШ №11', '8904012195', 'общеобразовательная', 'активная', 'fuyi', 'fk', '+7 (953) 368-79-85', 'esqkpbv@no.vsmailpro.com', 'https://shkola11-nur.yanao.ru/', 'duk', '555', '2025-10-31', 'Департамент образования Ямало-Ненецкого автономного округа', '8888', '2025-11-20', '2025-11-13', '2025-11-22 08:07:25', '2025-11-22 08:07:25');
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `students`
---
-
-CREATE TABLE `students` (
-  `id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `class_id` int(11) DEFAULT NULL,
-  `birth_date` date DEFAULT NULL,
-  `gender` enum('male','female') DEFAULT NULL,
-  `address` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+CREATE TABLE `roles` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `name` VARCHAR(50) NOT NULL UNIQUE,
+  `description` TEXT DEFAULT NULL,
+  `permissions` JSON DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `student_info`
---
-
-CREATE TABLE `student_info` (
-  `id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `birth_date` date DEFAULT NULL,
-  `address` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `student_parents`
---
-
-CREATE TABLE `student_parents` (
-  `id` int(11) NOT NULL,
-  `student_id` int(11) NOT NULL,
-  `parent_id` int(11) NOT NULL,
-  `relationship` varchar(50) DEFAULT 'parent',
-  `is_primary` tinyint(1) DEFAULT 0,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `study_periods`
---
-
-CREATE TABLE `study_periods` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `name` varchar(100) NOT NULL,
-  `start_date` date NOT NULL,
-  `end_date` date NOT NULL,
-  `is_active` tinyint(1) DEFAULT 0,
-  `academic_year` varchar(20) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Дамп данных таблицы `study_periods`
---
-
-INSERT INTO `study_periods` (`id`, `school_id`, `name`, `start_date`, `end_date`, `is_active`, `academic_year`, `created_at`) VALUES
-(1, 6, '1 четверть', '2025-09-01', '2025-10-31', 1, '2025-2026', '2025-11-27 15:36:30'),
-(2, 6, '2 четверть', '2025-11-01', '2025-12-31', 0, '2025-2026', '2025-11-27 15:36:30'),
-(3, 6, '3 четверть', '2026-01-09', '2026-03-22', 0, '2025-2026', '2025-11-27 15:36:30'),
-(4, 6, '4 четверть', '2026-04-01', '2026-05-31', 0, '2025-2026', '2025-11-27 15:36:30');
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `subjects`
---
-
-CREATE TABLE `subjects` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `name` varchar(100) NOT NULL,
-  `short_name` varchar(20) DEFAULT NULL,
-  `description` text DEFAULT NULL,
-  `is_active` tinyint(1) DEFAULT 1,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
---
--- Дамп данных таблицы `subjects`
---
-
-INSERT INTO `subjects` (`id`, `school_id`, `name`, `short_name`, `description`, `is_active`, `created_at`) VALUES
-(19, 6, 'Математика', 'Матем', NULL, 1, '2025-11-22 11:51:57'),
-(20, 6, 'Русский язык', 'Рус яз', NULL, 1, '2025-11-22 11:51:57'),
-(21, 6, 'Литература', 'Лит-ра', NULL, 1, '2025-11-22 11:51:57'),
-(22, 6, 'История', 'Ист', NULL, 1, '2025-11-22 11:51:57'),
-(23, 6, 'Обществознание', 'Общ', NULL, 1, '2025-11-22 11:51:57'),
-(24, 6, 'География', 'Геогр', NULL, 1, '2025-11-22 11:51:57'),
-(25, 6, 'Биология', 'Биол', NULL, 1, '2025-11-22 11:51:57'),
-(26, 6, 'Физика', 'Физ', NULL, 1, '2025-11-22 11:51:57'),
-(27, 6, 'Химия', 'Хим', NULL, 1, '2025-11-22 11:51:57'),
-(28, 6, 'Английский язык', 'Англ', NULL, 1, '2025-11-22 11:51:57'),
-(29, 6, 'Информатика', 'Инф', NULL, 1, '2025-11-22 11:51:57'),
-(30, 6, 'Физкультура', 'Физ-ра', NULL, 1, '2025-11-22 11:51:57'),
-(31, 6, 'Музыка', 'Муз', NULL, 1, '2025-11-22 11:51:57'),
-(32, 6, 'ИЗО', 'ИЗО', NULL, 1, '2025-11-22 11:51:57'),
-(33, 6, 'Технология', 'Техн', NULL, 1, '2025-11-22 11:51:57');
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `teachers`
---
-
-CREATE TABLE `teachers` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `subjects` text DEFAULT NULL,
-  `qualification` varchar(255) DEFAULT NULL,
-  `experience_years` int(11) DEFAULT NULL,
-  `education` text DEFAULT NULL,
-  `specialization` varchar(255) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `teacher_events`
---
-
-CREATE TABLE `teacher_events` (
-  `id` int(11) NOT NULL,
-  `teacher_id` int(11) NOT NULL,
-  `title` varchar(255) NOT NULL,
-  `description` text DEFAULT NULL,
-  `event_date` date NOT NULL,
-  `event_time` time DEFAULT NULL,
-  `event_type` enum('lesson','meeting','event','reminder','exam') DEFAULT 'event',
-  `class_id` int(11) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `teaching_materials`
---
-
-CREATE TABLE `teaching_materials` (
-  `id` int(11) NOT NULL,
-  `teacher_id` int(11) NOT NULL,
-  `class_id` int(11) DEFAULT NULL,
-  `subject_id` int(11) NOT NULL,
-  `title` varchar(255) NOT NULL,
-  `description` text DEFAULT NULL,
-  `file_path` varchar(500) DEFAULT NULL,
-  `file_type` varchar(50) DEFAULT NULL,
-  `topic` varchar(255) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `users`
---
 
 CREATE TABLE `users` (
-  `id` int(11) NOT NULL,
-  `school_id` int(11) DEFAULT NULL,
-  `class_id` int(11) DEFAULT NULL,
-  `login` varchar(50) NOT NULL,
-  `email` varchar(100) NOT NULL,
-  `password_hash` varchar(255) DEFAULT NULL,
-  `full_name` varchar(100) NOT NULL,
-  `position` varchar(100) DEFAULT NULL,
-  `birth_date` date DEFAULT NULL,
-  `gender` enum('male','female') DEFAULT NULL,
-  `work_place` varchar(255) DEFAULT NULL,
-  `passport_series` varchar(4) DEFAULT NULL,
-  `passport_number` varchar(6) DEFAULT NULL,
-  `snils` varchar(14) DEFAULT NULL,
-  `iin` varchar(12) DEFAULT NULL,
-  `parent_name` varchar(255) DEFAULT NULL,
-  `parent_phone` varchar(20) DEFAULT NULL,
-  `parent_email` varchar(255) DEFAULT NULL,
-  `address` text DEFAULT NULL,
-  `qualification` varchar(255) DEFAULT NULL,
-  `phone` varchar(20) DEFAULT NULL,
-  `role_id` int(11) NOT NULL,
-  `is_active` tinyint(1) DEFAULT 1,
-  `last_login` timestamp NULL DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `school_id` INT DEFAULT NULL,
+  `class_id` INT DEFAULT NULL,
+  `login` VARCHAR(50) NOT NULL UNIQUE,
+  `email` VARCHAR(100) NOT NULL UNIQUE,
+  `password_hash` VARCHAR(255) NOT NULL,
+  `full_name` VARCHAR(120) NOT NULL,
+  `position` VARCHAR(100) DEFAULT NULL,
+  `birth_date` DATE DEFAULT NULL,
+  `gender` ENUM('male','female') DEFAULT NULL,
+  `work_place` VARCHAR(255) DEFAULT NULL,
+  `passport_series` VARCHAR(4) DEFAULT NULL,
+  `passport_number` VARCHAR(6) DEFAULT NULL,
+  `snils` VARCHAR(14) DEFAULT NULL,
+  `iin` VARCHAR(12) DEFAULT NULL,
+  `parent_name` VARCHAR(255) DEFAULT NULL,
+  `parent_phone` VARCHAR(20) DEFAULT NULL,
+  `parent_email` VARCHAR(255) DEFAULT NULL,
+  `address` TEXT DEFAULT NULL,
+  `qualification` VARCHAR(255) DEFAULT NULL,
+  `phone` VARCHAR(20) DEFAULT NULL,
+  `role_id` INT NOT NULL,
+  `is_active` TINYINT(1) DEFAULT 1,
+  `last_login` TIMESTAMP NULL DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_users_school_id` (`school_id`),
+  KEY `idx_users_role_id` (`role_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---
--- Дамп данных таблицы `users`
---
+CREATE TABLE `classes` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `school_id` INT NOT NULL,
+  `name` VARCHAR(50) NOT NULL,
+  `grade_level` INT NOT NULL,
+  `class_teacher_id` INT DEFAULT NULL,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_classes_school_name` (`school_id`, `name`),
+  KEY `idx_classes_teacher` (`class_teacher_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO `users` (`id`, `school_id`, `class_id`, `login`, `email`, `password_hash`, `full_name`, `position`, `birth_date`, `gender`, `work_place`, `passport_series`, `passport_number`, `snils`, `iin`, `parent_name`, `parent_phone`, `parent_email`, `address`, `qualification`, `phone`, `role_id`, `is_active`, `last_login`, `created_at`, `updated_at`) VALUES
-(4, NULL, NULL, 'superadmin', 'superadmin@school.ru', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Главный Администратор', 'Системный администратор', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '', 1, 1, '2025-11-20 06:14:28', '2025-11-16 21:33:01', '2025-11-20 06:14:28'),
-(16, 6, NULL, 'test2', 'cmncmgog@no.vsmailpro', '$2y$10$NsywySJI/ezf9iJAokA1P.Ke6ChNpkeuZ2baGcPBTm/AXObF7QvhC', 'test2', 'test', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '+7 (734) 942-51-749', 1, 1, NULL, '2025-11-22 08:08:39', '2025-11-27 18:03:04'),
-(19, 6, NULL, 'test1', 'ulmnq@comfythings.com', '$2y$10$9R6C/cX1wC6n0sZezVmMQOPeJxqOvD0.JqZcpnzmU./yasDU5gfTe', 'test1', 'test', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '+7 (734) 942-51-749', 3, 1, NULL, '2025-11-27 16:44:24', '2025-11-27 18:03:40'),
-(20, 6, NULL, 'test3', '0gehp@comfythings.com', '$2y$10$GADzq8mDlGEh8gytaYA7s.Z92cYJUFYveF1AuP/62GMZ1f2Hxv.7S', 'test', 'test', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '9088647354', 5, 1, NULL, '2025-11-27 18:04:48', '2025-11-27 18:04:48'),
-(21, 6, NULL, 'test4', 'cx653@comfythings.com', '$2y$10$Md5EWeYQztWqn5yP8xJcuelZzg09GORYjlZvBWYL2nn35.3pr0BBi', 'test', 'test', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '+7 (734) 942-51-749', 2, 1, NULL, '2025-11-27 18:05:55', '2025-11-27 18:05:55');
+CREATE TABLE `subjects` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `school_id` INT NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `short_name` VARCHAR(20) DEFAULT NULL,
+  `description` TEXT DEFAULT NULL,
+  `is_active` TINYINT(1) DEFAULT 1,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_subjects_school_name` (`school_id`, `name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- --------------------------------------------------------
+CREATE TABLE `academic_periods` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `school_id` INT NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `start_date` DATE NOT NULL,
+  `end_date` DATE NOT NULL,
+  `is_active` TINYINT(1) DEFAULT 0,
+  `is_current` TINYINT(1) DEFAULT 0,
+  `academic_year` VARCHAR(20) DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---
--- Структура таблицы `user_logs`
---
+CREATE TABLE `curriculum` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `name` VARCHAR(150) NOT NULL,
+  `school_id` INT NOT NULL,
+  `description` TEXT DEFAULT NULL,
+  `grades` TEXT DEFAULT '[]',
+  `subjects` TEXT DEFAULT '[]',
+  `is_active` TINYINT(1) DEFAULT 1,
+  `created_by` INT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_curriculum_school` (`school_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `grade_types` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `school_id` INT NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `min_score` INT NOT NULL DEFAULT 0,
+  `max_score` INT NOT NULL DEFAULT 5,
+  `description` TEXT DEFAULT NULL,
+  `color` VARCHAR(7) DEFAULT '#3498db',
+  `is_active` TINYINT(1) DEFAULT 1,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_grade_types_school_name` (`school_id`, `name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `grade_weights` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `school_id` INT NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
+  `weight` DECIMAL(5,2) NOT NULL DEFAULT 1.00,
+  `description` TEXT DEFAULT NULL,
+  `is_active` TINYINT(1) DEFAULT 1,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_grade_weights_school_name` (`school_id`, `name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `schedule` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `school_id` INT NOT NULL,
+  `class_id` INT NOT NULL,
+  `subject_id` INT NOT NULL,
+  `teacher_id` INT NOT NULL,
+  `lesson_date` DATE NOT NULL,
+  `lesson_number` INT DEFAULT NULL,
+  `room` VARCHAR(20) DEFAULT NULL,
+  `is_completed` TINYINT(1) DEFAULT 0,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_schedule_class_date` (`class_id`, `lesson_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `grades` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `student_id` INT NOT NULL,
+  `teacher_id` INT NOT NULL,
+  `subject_id` INT NOT NULL,
+  `grade_value` VARCHAR(10) NOT NULL,
+  `grade_type_id` INT DEFAULT NULL,
+  `grade_weight_id` INT DEFAULT NULL,
+  `lesson_date` DATE NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_grades_student_date` (`student_id`, `lesson_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `homework` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `teacher_id` INT NOT NULL,
+  `class_id` INT NOT NULL,
+  `subject_id` INT NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `description` TEXT DEFAULT NULL,
+  `due_date` DATE DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `homework_completion` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `homework_id` INT NOT NULL,
+  `student_id` INT NOT NULL,
+  `status` ENUM('not_done','done','late') DEFAULT 'not_done',
+  `submitted_at` TIMESTAMP NULL DEFAULT NULL,
+  `student_comment` TEXT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_homework_student` (`homework_id`, `student_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `attendance` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `student_id` INT NOT NULL,
+  `teacher_id` INT NOT NULL,
+  `lesson_date` DATE NOT NULL,
+  `status` ENUM('present','absent','late') NOT NULL DEFAULT 'present',
+  `notes` TEXT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_attendance_student_date` (`student_id`, `lesson_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `student_info` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `user_id` INT NOT NULL,
+  `birth_date` DATE DEFAULT NULL,
+  `address` TEXT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_student_info_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `student_parent_links` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `parent_id` INT NOT NULL,
+  `student_id` INT NOT NULL,
+  `relationship` VARCHAR(50) NOT NULL DEFAULT 'parent',
+  `is_primary` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_student_parent` (`parent_id`, `student_id`),
+  KEY `idx_student_parent_student` (`student_id`),
+  KEY `idx_student_parent_parent` (`parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `teacher_events` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `teacher_id` INT NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `description` TEXT DEFAULT NULL,
+  `event_date` DATE NOT NULL,
+  `event_time` TIME DEFAULT NULL,
+  `event_type` ENUM('lesson','meeting','event','reminder','exam') DEFAULT 'event',
+  `class_id` INT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `teaching_materials` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `teacher_id` INT NOT NULL,
+  `class_id` INT DEFAULT NULL,
+  `subject_id` INT NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `description` TEXT DEFAULT NULL,
+  `file_path` VARCHAR(500) DEFAULT NULL,
+  `file_type` VARCHAR(50) DEFAULT NULL,
+  `topic` VARCHAR(255) DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `report_files` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `uploaded_by` INT NOT NULL,
+  `filename` VARCHAR(255) DEFAULT NULL,
+  `original_name` VARCHAR(255) DEFAULT NULL,
+  `file_size` INT DEFAULT NULL,
+  `file_type` VARCHAR(100) DEFAULT NULL,
+  `description` TEXT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `user_logs` (
-  `id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `action` varchar(255) NOT NULL,
-  `details` text DEFAULT NULL,
-  `ip_address` varchar(45) DEFAULT NULL,
-  `user_agent` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `user_id` INT NOT NULL,
+  `action` VARCHAR(255) NOT NULL,
+  `details` TEXT DEFAULT NULL,
+  `ip_address` VARCHAR(45) DEFAULT NULL,
+  `user_agent` TEXT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Структура таблицы `user_sessions`
---
 
 CREATE TABLE `user_sessions` (
-  `id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `session_id` varchar(255) NOT NULL,
-  `ip_address` varchar(45) DEFAULT NULL,
-  `user_agent` text DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `user_id` INT NOT NULL,
+  `session_id` VARCHAR(255) NOT NULL,
+  `ip_address` VARCHAR(45) DEFAULT NULL,
+  `user_agent` TEXT DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---
--- Индексы сохранённых таблиц
---
-
---
--- Индексы таблицы `academic_periods`
---
-ALTER TABLE `academic_periods`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_academic_periods_school` (`school_id`),
-  ADD KEY `idx_academic_periods_dates` (`start_date`,`end_date`),
-  ADD KEY `idx_academic_periods_current` (`is_current`);
-
---
--- Индексы таблицы `attendance`
---
-ALTER TABLE `attendance`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `student_id` (`student_id`),
-  ADD KEY `teacher_id` (`teacher_id`),
-  ADD KEY `class_id` (`class_id`);
-
---
--- Индексы таблицы `classes`
---
-ALTER TABLE `classes`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `school_id` (`school_id`),
-  ADD KEY `class_teacher_id` (`class_teacher_id`);
-
---
--- Индексы таблицы `class_curriculum`
---
-ALTER TABLE `class_curriculum`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `class_id` (`class_id`);
-
---
--- Индексы таблицы `grades`
---
-ALTER TABLE `grades`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `student_id` (`student_id`),
-  ADD KEY `teacher_id` (`teacher_id`),
-  ADD KEY `subject_id` (`subject_id`),
-  ADD KEY `school_id` (`school_id`);
-
---
--- Индексы таблицы `grade_types`
---
-ALTER TABLE `grade_types`
-  ADD PRIMARY KEY (`id`);
-
---
--- Индексы таблицы `grade_weights`
---
-ALTER TABLE `grade_weights`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_school_weight_name` (`school_id`,`name`);
-
---
--- Индексы таблицы `homework`
---
-ALTER TABLE `homework`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `teacher_id` (`teacher_id`),
-  ADD KEY `class_id` (`class_id`),
-  ADD KEY `subject_id` (`subject_id`);
-
---
--- Индексы таблицы `homework_completion`
---
-ALTER TABLE `homework_completion`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_homework_student` (`homework_id`,`student_id`),
-  ADD KEY `student_id` (`student_id`);
-
---
--- Индексы таблицы `parents`
---
-ALTER TABLE `parents`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`),
-  ADD KEY `student_id` (`student_id`);
-
---
--- Индексы таблицы `parent_students`
---
-ALTER TABLE `parent_students`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_parent_student` (`parent_id`,`student_id`),
-  ADD KEY `student_id` (`student_id`);
-
---
--- Индексы таблицы `report_files`
---
-ALTER TABLE `report_files`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `uploaded_by` (`uploaded_by`);
-
---
--- Индексы таблицы `roles`
---
-ALTER TABLE `roles`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `name` (`name`);
-
---
--- Индексы таблицы `schedule`
---
-ALTER TABLE `schedule`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `school_id` (`school_id`),
-  ADD KEY `class_id` (`class_id`),
-  ADD KEY `subject_id` (`subject_id`),
-  ADD KEY `teacher_id` (`teacher_id`);
-
---
--- Индексы таблицы `schools`
---
-ALTER TABLE `schools`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `inn` (`inn`);
-
---
--- Индексы таблицы `students`
---
-ALTER TABLE `students`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`),
-  ADD KEY `class_id` (`class_id`);
-
---
--- Индексы таблицы `student_info`
---
-ALTER TABLE `student_info`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`);
-
---
--- Индексы таблицы `student_parents`
---
-ALTER TABLE `student_parents`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_student_parent` (`student_id`,`parent_id`),
-  ADD KEY `parent_id` (`parent_id`);
-
---
--- Индексы таблицы `study_periods`
---
-ALTER TABLE `study_periods`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `school_id` (`school_id`);
-
---
--- Индексы таблицы `subjects`
---
-ALTER TABLE `subjects`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `school_id` (`school_id`);
-
---
--- Индексы таблицы `teachers`
---
-ALTER TABLE `teachers`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `unique_teacher_school` (`user_id`,`school_id`),
-  ADD KEY `school_id` (`school_id`);
-
---
--- Индексы таблицы `teacher_events`
---
-ALTER TABLE `teacher_events`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `teacher_id` (`teacher_id`),
-  ADD KEY `class_id` (`class_id`);
-
---
--- Индексы таблицы `teaching_materials`
---
-ALTER TABLE `teaching_materials`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `teacher_id` (`teacher_id`),
-  ADD KEY `class_id` (`class_id`),
-  ADD KEY `subject_id` (`subject_id`);
-
---
--- Индексы таблицы `users`
---
 ALTER TABLE `users`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `login` (`login`),
-  ADD UNIQUE KEY `email` (`email`),
-  ADD KEY `school_id` (`school_id`),
-  ADD KEY `role_id` (`role_id`),
-  ADD KEY `class_id` (`class_id`);
+  ADD CONSTRAINT `fk_users_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_users_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE RESTRICT;
 
---
--- Индексы таблицы `user_logs`
---
-ALTER TABLE `user_logs`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`);
-
---
--- Индексы таблицы `user_sessions`
---
-ALTER TABLE `user_sessions`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_user_sessions_user` (`user_id`),
-  ADD KEY `idx_user_sessions_created` (`created_at`);
-
---
--- AUTO_INCREMENT для сохранённых таблиц
---
-
---
--- AUTO_INCREMENT для таблицы `academic_periods`
---
-ALTER TABLE `academic_periods`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
-
---
--- AUTO_INCREMENT для таблицы `attendance`
---
-ALTER TABLE `attendance`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT для таблицы `classes`
---
 ALTER TABLE `classes`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  ADD CONSTRAINT `fk_classes_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_classes_teacher` FOREIGN KEY (`class_teacher_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
 
---
--- AUTO_INCREMENT для таблицы `class_curriculum`
---
-ALTER TABLE `class_curriculum`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+ALTER TABLE `subjects`
+  ADD CONSTRAINT `fk_subjects_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE;
 
---
--- AUTO_INCREMENT для таблицы `curriculum`
---
+ALTER TABLE `academic_periods`
+  ADD CONSTRAINT `fk_academic_periods_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE;
+
 ALTER TABLE `curriculum`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  ADD CONSTRAINT `fk_curriculum_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_curriculum_user` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL;
 
---
--- AUTO_INCREMENT для таблицы `grades`
---
-ALTER TABLE `grades`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
-
---
--- AUTO_INCREMENT для таблицы `grade_types`
---
 ALTER TABLE `grade_types`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
+  ADD CONSTRAINT `fk_grade_types_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE;
 
---
--- AUTO_INCREMENT для таблицы `grade_weights`
---
 ALTER TABLE `grade_weights`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
+  ADD CONSTRAINT `fk_grade_weights_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE;
 
---
--- AUTO_INCREMENT для таблицы `homework`
---
-ALTER TABLE `homework`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
-
---
--- AUTO_INCREMENT для таблицы `homework_completion`
---
-ALTER TABLE `homework_completion`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT для таблицы `parents`
---
-ALTER TABLE `parents`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT для таблицы `parent_students`
---
-ALTER TABLE `parent_students`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
-
---
--- AUTO_INCREMENT для таблицы `report_files`
---
-ALTER TABLE `report_files`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
-
---
--- AUTO_INCREMENT для таблицы `roles`
---
-ALTER TABLE `roles`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
-
---
--- AUTO_INCREMENT для таблицы `schedule`
---
 ALTER TABLE `schedule`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=30;
+  ADD CONSTRAINT `fk_schedule_school` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_schedule_class` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_schedule_subject` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_schedule_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
---
--- AUTO_INCREMENT для таблицы `schools`
---
-ALTER TABLE `schools`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
-
---
--- AUTO_INCREMENT для таблицы `students`
---
-ALTER TABLE `students`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT для таблицы `student_info`
---
-ALTER TABLE `student_info`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
-
---
--- AUTO_INCREMENT для таблицы `student_parents`
---
-ALTER TABLE `student_parents`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT для таблицы `study_periods`
---
-ALTER TABLE `study_periods`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
-
---
--- AUTO_INCREMENT для таблицы `subjects`
---
-ALTER TABLE `subjects`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=34;
-
---
--- AUTO_INCREMENT для таблицы `teachers`
---
-ALTER TABLE `teachers`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
-
---
--- AUTO_INCREMENT для таблицы `teacher_events`
---
-ALTER TABLE `teacher_events`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
-
---
--- AUTO_INCREMENT для таблицы `teaching_materials`
---
-ALTER TABLE `teaching_materials`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT для таблицы `users`
---
-ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
-
---
--- AUTO_INCREMENT для таблицы `user_logs`
---
-ALTER TABLE `user_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT для таблицы `user_sessions`
---
-ALTER TABLE `user_sessions`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
-
---
--- Ограничения внешнего ключа сохраненных таблиц
---
-
---
--- Ограничения внешнего ключа таблицы `academic_periods`
---
-ALTER TABLE `academic_periods`
-  ADD CONSTRAINT `academic_periods_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `attendance`
---
-ALTER TABLE `attendance`
-  ADD CONSTRAINT `attendance_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `attendance_ibfk_2` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `attendance_ibfk_3` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `classes`
---
-ALTER TABLE `classes`
-  ADD CONSTRAINT `classes_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `classes_ibfk_2` FOREIGN KEY (`class_teacher_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
-
---
--- Ограничения внешнего ключа таблицы `class_curriculum`
---
-ALTER TABLE `class_curriculum`
-  ADD CONSTRAINT `class_curriculum_ibfk_1` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `grades`
---
 ALTER TABLE `grades`
-  ADD CONSTRAINT `grades_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`),
-  ADD CONSTRAINT `grades_ibfk_2` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`),
-  ADD CONSTRAINT `grades_ibfk_3` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`);
+  ADD CONSTRAINT `fk_grades_student` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_grades_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_grades_subject` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `grade_weights`
---
-ALTER TABLE `grade_weights`
-  ADD CONSTRAINT `grade_weights_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `homework`
---
 ALTER TABLE `homework`
-  ADD CONSTRAINT `homework_ibfk_1` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`),
-  ADD CONSTRAINT `homework_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`),
-  ADD CONSTRAINT `homework_ibfk_3` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`);
+  ADD CONSTRAINT `fk_homework_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_homework_class` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_homework_subject` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `homework_completion`
---
 ALTER TABLE `homework_completion`
-  ADD CONSTRAINT `homework_completion_ibfk_1` FOREIGN KEY (`homework_id`) REFERENCES `homework` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `homework_completion_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `fk_homework_completion_homework` FOREIGN KEY (`homework_id`) REFERENCES `homework` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_homework_completion_student` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `parents`
---
-ALTER TABLE `parents`
-  ADD CONSTRAINT `parents_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `parents_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE;
+ALTER TABLE `attendance`
+  ADD CONSTRAINT `fk_attendance_student` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_attendance_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `parent_students`
---
-ALTER TABLE `parent_students`
-  ADD CONSTRAINT `parent_students_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `parent_students_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `report_files`
---
-ALTER TABLE `report_files`
-  ADD CONSTRAINT `report_files_ibfk_1` FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `schedule`
---
-ALTER TABLE `schedule`
-  ADD CONSTRAINT `schedule_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`),
-  ADD CONSTRAINT `schedule_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`),
-  ADD CONSTRAINT `schedule_ibfk_3` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`),
-  ADD CONSTRAINT `schedule_ibfk_4` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`);
-
---
--- Ограничения внешнего ключа таблицы `students`
---
-ALTER TABLE `students`
-  ADD CONSTRAINT `students_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `students_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL;
-
---
--- Ограничения внешнего ключа таблицы `student_info`
---
 ALTER TABLE `student_info`
-  ADD CONSTRAINT `student_info_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `fk_student_info_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `student_parents`
---
-ALTER TABLE `student_parents`
-  ADD CONSTRAINT `student_parents_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `student_parents_ibfk_2` FOREIGN KEY (`parent_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+ALTER TABLE `student_parent_links`
+  ADD CONSTRAINT `fk_student_parent_links_parent` FOREIGN KEY (`parent_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_student_parent_links_student` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `study_periods`
---
-ALTER TABLE `study_periods`
-  ADD CONSTRAINT `study_periods_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`);
-
---
--- Ограничения внешнего ключа таблицы `subjects`
---
-ALTER TABLE `subjects`
-  ADD CONSTRAINT `subjects_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `teachers`
---
-ALTER TABLE `teachers`
-  ADD CONSTRAINT `teachers_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `teachers_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `teacher_events`
---
 ALTER TABLE `teacher_events`
-  ADD CONSTRAINT `teacher_events_ibfk_1` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`),
-  ADD CONSTRAINT `teacher_events_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`);
+  ADD CONSTRAINT `fk_teacher_events_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_teacher_events_class` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL;
 
---
--- Ограничения внешнего ключа таблицы `teaching_materials`
---
 ALTER TABLE `teaching_materials`
-  ADD CONSTRAINT `teaching_materials_ibfk_1` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`),
-  ADD CONSTRAINT `teaching_materials_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`),
-  ADD CONSTRAINT `teaching_materials_ibfk_3` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`);
+  ADD CONSTRAINT `fk_teaching_materials_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_teaching_materials_class` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_teaching_materials_subject` FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `users`
---
-ALTER TABLE `users`
-  ADD CONSTRAINT `users_ibfk_1` FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `users_ibfk_2` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`),
-  ADD CONSTRAINT `users_ibfk_3` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL;
+ALTER TABLE `report_files`
+  ADD CONSTRAINT `fk_report_files_user` FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `user_logs`
---
 ALTER TABLE `user_logs`
-  ADD CONSTRAINT `user_logs_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `fk_user_logs_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
---
--- Ограничения внешнего ключа таблицы `user_sessions`
---
 ALTER TABLE `user_sessions`
-  ADD CONSTRAINT `user_sessions_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
-COMMIT;
+  ADD CONSTRAINT `fk_user_sessions_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+INSERT INTO `schools` (`id`, `full_name`, `short_name`, `inn`, `type`, `status`, `legal_address`, `physical_address`, `phone`, `email`, `website`, `director_name`, `license_number`, `license_date`, `license_issued_by`, `accreditation_number`, `accreditation_date`, `accreditation_until`) VALUES
+(1, 'School No. 1', 'School 1', '7701000001', 'obshcheobrazovatelnaya', 'active', 'Moscow, Lenina st. 12', 'Moscow, Lenina st. 12', '+7 (495) 111-22-33', 'school1@example.com', 'https://school1.example', 'Anna Petrova', 'LIC-001', '2024-09-01', 'Education Department', 'A-1001', '2023-05-15', '2028-05-15');
+
+INSERT INTO `roles` (`id`, `name`, `description`, `permissions`) VALUES
+(1, 'super_admin', 'Main system administrator', '["manage_users","manage_schools","manage_roles","view_reports","system_config"]'),
+(2, 'school_admin', 'School administrator', '["manage_classes","manage_teachers","manage_students","manage_parents","view_reports"]'),
+(3, 'teacher', 'Teacher', '["grade_students","create_homework","view_students","manage_attendance"]'),
+(4, 'class_teacher', 'Class teacher', '["grade_students","create_homework","view_class_journal","contact_parents"]'),
+(5, 'student', 'Student', '["view_grades","view_homework","view_schedule"]'),
+(6, 'parent', 'Parent', '["view_child_grades","view_child_homework","contact_teachers"]');
+
+INSERT INTO `users` (`id`, `school_id`, `class_id`, `login`, `email`, `password_hash`, `full_name`, `position`, `birth_date`, `gender`, `phone`, `role_id`, `is_active`) VALUES
+(1, NULL, NULL, 'superadmin', 'superadmin@school.ru', '$2y$10$WrrONmo.trGLNWoa07jcUuFlfXjkX9n2.qFxHZ6Qryc19VaiObDnC', 'Main Administrator', 'System administrator', NULL, NULL, '+7 (900) 000-00-01', 1, 1),
+(2, 1, NULL, 'schooladmin', 'schooladmin@school.ru', '$2y$10$D1nlwUzPsuTVZBxIdo.AiupzYVBZzl49TfRl7vDeEuToXrwhYkMwm', 'School Administrator', 'Director', NULL, NULL, '+7 (900) 000-00-02', 2, 1),
+(3, 1, NULL, 'teacher1', 'teacher1@school.ru', '$2y$10$wcm59Teztv2.f88TvH8A9OeucaSJ323aE18hIxubWRHgm.pEXML4e', 'Maria Ivanova', 'Math teacher', '1990-05-12', 'female', '+7 (900) 000-00-03', 3, 1),
+(4, 1, NULL, 'classteacher', 'classteacher@school.ru', '$2y$10$36L3NokXz74vq/FyFd2fLeTFpmwGLFyP/4fsmkKJIZ5gBC/GgBENu', 'Olga Petrova', 'Class teacher', '1987-08-20', 'female', '+7 (900) 000-00-04', 4, 1),
+(5, 1, NULL, 'student1', 'student1@school.ru', '$2y$10$p9Ql4WQhhjKHxWnbL3.gXOomfFL0P/20BMWib/256o6sLIZyyAItq', 'Artem Smirnov', 'Student', '2011-02-14', 'male', '+7 (900) 000-00-05', 5, 1),
+(6, 1, NULL, 'parent1', 'parent1@school.ru', '$2y$10$7ZIrf5uQx/KXaxt6DE7gMOmJAohNn26AwlA75n471N.E1DKPhklr.', 'Elena Smirnova', 'Parent', NULL, 'female', '+7 (900) 000-00-06', 6, 1);
+
+INSERT INTO `classes` (`id`, `school_id`, `name`, `grade_level`, `class_teacher_id`) VALUES
+(1, 1, '8A', 8, 4);
+
+UPDATE `users` SET `class_id` = 1 WHERE `id` = 5;
+
+INSERT INTO `subjects` (`id`, `school_id`, `name`, `short_name`, `description`, `is_active`) VALUES
+(1, 1, 'Mathematics', 'Math', 'Core subject', 1),
+(2, 1, 'Russian Language', 'Rus', 'Language and literature', 1),
+(3, 1, 'Literature', 'Lit', 'Reading and literature', 1),
+(4, 1, 'History', 'Hist', 'History of Russia and world', 1),
+(5, 1, 'Physics', 'Phys', 'Science subject', 1),
+(6, 1, 'English', 'Eng', 'Foreign language', 1);
+
+INSERT INTO `academic_periods` (`id`, `school_id`, `name`, `start_date`, `end_date`, `is_active`, `is_current`, `academic_year`) VALUES
+(1, 1, '1 quarter', '2025-09-01', '2025-10-31', 0, 0, '2025-2026'),
+(2, 1, '2 quarter', '2025-11-01', '2025-12-31', 1, 1, '2025-2026'),
+(3, 1, '3 quarter', '2026-01-09', '2026-03-22', 0, 0, '2025-2026');
+
+INSERT INTO `curriculum` (`id`, `name`, `school_id`, `description`, `grades`, `subjects`, `is_active`, `created_by`) VALUES
+(1, 'Main curriculum 8A', 1, 'Base curriculum for grade 8', '["5","4","3","2"]', '[{"name":"Mathematics","hours":"4"},{"name":"Russian language","hours":"4"},{"name":"Literature","hours":"2"},{"name":"History","hours":"2"},{"name":"Physics","hours":"2"},{"name":"English language","hours":"3"}]', 1, 2);
+
+INSERT INTO `grade_types` (`id`, `school_id`, `name`, `min_score`, `max_score`, `description`, `color`, `is_active`) VALUES
+(1, 1, 'Excellent', 5, 5, 'Excellent work', '#2ecc71', 1),
+(2, 1, 'Good', 4, 4, 'Good work', '#f1c40f', 1),
+(3, 1, 'Satisfactory', 3, 3, 'Passable result', '#e67e22', 1),
+(4, 1, 'Unsatisfactory', 2, 2, 'Failed result', '#e74c3c', 1);
+
+INSERT INTO `grade_weights` (`id`, `school_id`, `name`, `weight`, `description`, `is_active`) VALUES
+(1, 1, 'Standard', 1.00, 'Regular mark', 1),
+(2, 1, 'Quiz', 1.50, 'Quiz', 1),
+(3, 1, 'Control', 2.00, 'Control work', 1);
+
+INSERT INTO `schedule` (`id`, `school_id`, `class_id`, `subject_id`, `teacher_id`, `lesson_date`, `lesson_number`, `room`, `is_completed`) VALUES
+(1, 1, 1, 1, 3, '2026-09-16', 1, '205', 1),
+(2, 1, 1, 2, 3, '2026-09-16', 2, '204', 1),
+(3, 1, 1, 3, 3, '2026-09-17', 3, '201', 0),
+(4, 1, 1, 4, 4, '2026-09-17', 4, '202', 0);
+
+INSERT INTO `grades` (`id`, `student_id`, `teacher_id`, `subject_id`, `grade_value`, `grade_type_id`, `grade_weight_id`, `lesson_date`) VALUES
+(1, 5, 3, 1, '5', 1, 1, '2026-09-16'),
+(2, 5, 3, 2, '4', 2, 1, '2026-09-16'),
+(3, 5, 4, 3, '3', 3, 1, '2026-09-17');
+
+INSERT INTO `homework` (`id`, `teacher_id`, `class_id`, `subject_id`, `title`, `description`, `due_date`) VALUES
+(1, 3, 1, 1, 'Solve exercises on equations', 'Solve tasks 12, 15, 18 on page 45', '2026-09-20'),
+(2, 3, 1, 2, 'Prepare a summary', 'Write a summary on the theme Autumn in the city', '2026-09-21');
+
+INSERT INTO `homework_completion` (`id`, `homework_id`, `student_id`, `status`, `submitted_at`) VALUES
+(1, 1, 5, 'done', '2026-09-17 08:00:00'),
+(2, 2, 5, 'not_done', NULL);
+
+INSERT INTO `attendance` (`id`, `student_id`, `teacher_id`, `lesson_date`, `status`, `notes`) VALUES
+(1, 5, 3, '2026-09-16', 'present', 'Present at lesson'),
+(2, 5, 4, '2026-09-17', 'late', 'Late by 5 minutes');
+
+INSERT INTO `student_info` (`id`, `user_id`, `birth_date`, `address`) VALUES
+(1, 5, '2011-02-14', 'Moscow, Lesnaya st. 15, apt. 10');
+
+INSERT INTO `student_parent_links` (`id`, `parent_id`, `student_id`, `relationship`, `is_primary`) VALUES
+(1, 6, 5, 'parent', 1);
+
+INSERT INTO `teacher_events` (`id`, `teacher_id`, `title`, `description`, `event_date`, `event_time`, `event_type`, `class_id`) VALUES
+(1, 3, 'Pedagogical meeting', 'Weekly planning meeting', '2026-09-18', '15:30:00', 'meeting', 1),
+(2, 4, 'Parent meeting', 'Meeting with parents of 8A class', '2026-09-20', '18:00:00', 'event', 1);
+
+INSERT INTO `user_logs` (`id`, `user_id`, `action`, `details`, `ip_address`, `user_agent`) VALUES
+(1, 1, 'system_setup', 'Database rebuilt successfully', '127.0.0.1', 'mysql-import');
+
+INSERT INTO `user_sessions` (`id`, `user_id`, `session_id`, `ip_address`, `user_agent`) VALUES
+(1, 1, 'seed-session-superadmin', '127.0.0.1', 'seed');
+
+SET @db_status = 'DATABASE_REBUILT_OK';
+SELECT @db_status AS status;
