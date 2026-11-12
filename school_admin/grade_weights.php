@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -21,33 +21,15 @@ $school_stmt = $pdo->prepare("SELECT full_name, short_name FROM schools WHERE id
 $school_stmt->execute([$school_id]);
 $school = $school_stmt->fetch();
 
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$weight_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
-
-// Создаем таблицу весов оценок если её нет
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS grade_weights (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            school_id INT NOT NULL,
-            name VARCHAR(100) NOT NULL,
-            weight DECIMAL(5,2) NOT NULL DEFAULT 1.0,
-            description TEXT,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
-        )
-    ");
-} catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы grade_weights: " . $e->getMessage());
-}
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$weight_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 // Обработка добавления веса оценки
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add') {
         $name = trim($_POST['name']);
-        $weight = floatval($_POST['weight']);
+        $raw_weight = $_POST['weight'] ?? '';
+        $weight = is_scalar($raw_weight) && is_numeric($raw_weight) ? (float)$raw_weight : 0.0;
         $description = !empty($_POST['description']) ? trim($_POST['description']) : null;
         $is_active = isset($_POST['is_active']) ? 1 : 0;
 
@@ -58,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Введите название типа оценки";
         }
 
-        if ($weight <= 0) {
+        if (!is_finite($weight) || $weight <= 0) {
             $errors[] = "Вес оценки должен быть больше 0";
         }
 
@@ -87,12 +69,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $is_active
                     ]);
 
+                    logUserAction($pdo, 'grade_weight_created', json_encode([
+                        'school_id' => $school_id,
+                        'name' => $name,
+                        'weight' => $weight
+                    ], JSON_UNESCAPED_UNICODE));
                     $_SESSION['success_message'] = "Вес оценки успешно добавлен!";
                     header('Location: grade_weights.php');
                     exit;
                 }
             } catch (PDOException $e) {
-                $error = "Ошибка при добавлении веса оценки: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -101,7 +88,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Обработка редактирования веса оценки
     elseif ($action === 'edit' && $weight_id > 0) {
         $name = trim($_POST['name']);
-        $weight = floatval($_POST['weight']);
+        $raw_weight = $_POST['weight'] ?? '';
+        $weight = is_scalar($raw_weight) && is_numeric($raw_weight) ? (float)$raw_weight : 0.0;
         $description = !empty($_POST['description']) ? trim($_POST['description']) : null;
         $is_active = isset($_POST['is_active']) ? 1 : 0;
 
@@ -112,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Введите название типа оценки";
         }
 
-        if ($weight <= 0) {
+        if (!is_finite($weight) || $weight <= 0) {
             $errors[] = "Вес оценки должен быть больше 0";
         }
 
@@ -143,12 +131,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $school_id
                     ]);
 
+                    logUserAction($pdo, 'grade_weight_updated', json_encode([
+                        'school_id' => $school_id,
+                        'weight_id' => $weight_id,
+                        'weight' => $weight
+                    ], JSON_UNESCAPED_UNICODE));
                     $_SESSION['success_message'] = "Вес оценки успешно обновлен!";
                     header('Location: grade_weights.php');
                     exit;
                 }
             } catch (PDOException $e) {
-                $error = "Ошибка при обновлении веса оценки: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -159,18 +152,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Обработка удаления веса оценки
 if ($action === 'delete' && $weight_id > 0) {
     try {
-        $stmt = $pdo->prepare("DELETE FROM grade_weights WHERE id = ? AND school_id = ?");
-        $stmt->execute([$weight_id, $school_id]);
+        $usage_stmt = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM grades g
+            JOIN users u ON u.id = g.student_id AND u.school_id = ?
+            WHERE g.grade_weight_id = ?
+        ");
+        $usage_stmt->execute([$school_id, $weight_id]);
+        $type_reference_stmt = $pdo->prepare("
+            SELECT COUNT(*) FROM grade_types
+            WHERE school_id = ? AND default_weight_id = ?
+        ");
+        $type_reference_stmt->execute([$school_id, $weight_id]);
 
-        if ($stmt->rowCount() > 0) {
-            $_SESSION['success_message'] = "Вес оценки успешно удален!";
+        if ((int)$usage_stmt->fetchColumn() > 0 || (int)$type_reference_stmt->fetchColumn() > 0) {
+            $stmt = $pdo->prepare("UPDATE grade_weights SET is_active = 0 WHERE id = ? AND school_id = ?");
+            $stmt->execute([$weight_id, $school_id]);
+            $_SESSION['success_message'] = "Вес используется оценками или типами работ и отключен. Сохранённые оценки продолжают учитывать его значение.";
         } else {
-            $_SESSION['error_message'] = "Вес оценки не найден или у вас нет прав для его удаления";
+            $stmt = $pdo->prepare("DELETE FROM grade_weights WHERE id = ? AND school_id = ?");
+            $stmt->execute([$weight_id, $school_id]);
+            $_SESSION['success_message'] = $stmt->rowCount() > 0
+                ? "Вес оценки успешно удален!"
+                : "Вес оценки не найден или у вас нет прав для его удаления";
         }
+        logUserAction($pdo, 'grade_weight_deleted_or_disabled', json_encode([
+            'school_id' => $school_id,
+            'weight_id' => $weight_id
+        ], JSON_UNESCAPED_UNICODE));
         header('Location: grade_weights.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении веса оценки: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: grade_weights.php');
         exit;
     }
@@ -193,7 +206,7 @@ if (($action === 'edit' || $action === 'view') && $weight_id > 0) {
             exit;
         }
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при получении данных веса оценки: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: grade_weights.php');
         exit;
     }
@@ -396,38 +409,7 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-            <?php if ($school): ?>
-                <div class="school-info">
-                    <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                </div>
-            <?php endif; ?>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge school-admin">Администратор школы</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li class="nav-section">Управление школой</li>
-                <li><a href="classes.php" class="nav-link">👨‍🏫 Классы</a></li>
-                <li><a href="teachers.php" class="nav-link">👥 Учителя</a></li>
-                <li><a href="students.php" class="nav-link">🎓 Ученики</a></li>
-                <li><a href="parents.php" class="nav-link">👨‍👩‍👧‍👦 Родители</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="grade_types.php" class="nav-link">📊 Типы оценок</a></li>
-                <li><a href="grade_weights.php" class="nav-link active">⚖️ Веса оценок</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $schoolAdminActivePage = 'grade_weights'; require __DIR__ . '/../includes/school_admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -442,15 +424,15 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -458,6 +440,9 @@ try {
                 <div class="admin-form">
                     <h2><?php echo $action === 'add' ? 'Добавить вес оценки' : 'Редактировать вес оценки'; ?></h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$weight_id; ?>">
                         <div class="form-grid">
                             <div class="form-group">
                                 <label for="name">Название типа оценки *</label>
@@ -567,7 +552,7 @@ try {
                                     <h3 class="weight-title"><?php echo htmlspecialchars($weight['name']); ?></h3>
                                     <div class="table-actions">
                                         <a href="grade_weights.php?action=edit&id=<?php echo $weight['id']; ?>" class="btn-action">✏️</a>
-                                        <a href="grade_weights.php?action=delete&id=<?php echo $weight['id']; ?>" class="btn-action" onclick="return confirm('Удалить вес оценки?')">🗑️</a>
+                                        <?php echo csrf_post_button('delete', (int)$weight['id'], '🗑️', 'btn-action', 'Удалить вес оценки?'); ?>
                                     </div>
                                 </div>
 

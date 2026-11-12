@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -7,19 +7,6 @@ require_once '../config/auth.php';
 requireSuperAdmin();
 
 $pdo = getDatabaseConnection();
-
-// Функция для получения читаемого названия роли
-function getRoleName($roleKey) {
-    $roles = [
-        'super_admin' => 'Главный администратор',
-        'school_admin' => 'Администратор школы',
-        'teacher' => 'Учитель',
-        'class_teacher' => 'Классный руководитель',
-        'student' => 'Ученик',
-        'parent' => 'Родитель'
-    ];
-    return $roles[$roleKey] ?? $roleKey;
-}
 
 // Статистика для главного админа
 $stats = [];
@@ -55,7 +42,7 @@ try {
 }
 
 // Последние добавленные школы
-$recent_schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC LIMIT 5")->fetchAll();
+$recent_schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC LIMIT 3")->fetchAll();
 
 // Последние активности пользователей
 $recent_activities = $pdo->query("
@@ -64,7 +51,7 @@ $recent_activities = $pdo->query("
     JOIN users u ON us.user_id = u.id 
     JOIN roles r ON u.role_id = r.id 
     ORDER BY us.created_at DESC 
-    LIMIT 8
+    LIMIT 3
 ")->fetchAll();
 ?>
 
@@ -116,10 +103,6 @@ $recent_activities = $pdo->query("
             color: white;
         }
 
-        .role-badge.super-admin {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        }
-
         .role-badge.school_admin {
             background: linear-gradient(135deg, #60a5fa 0%, #2563eb 100%);
         }
@@ -140,57 +123,84 @@ $recent_activities = $pdo->query("
             background: linear-gradient(135deg, #475569 0%, #334155 100%);
         }
 
-        .user-avatar {
+        .dashboard-login-item .user-avatar {
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            background: #3498db;
+            background: linear-gradient(135deg, #38bdf8, #2563eb);
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: bold;
+            flex: 0 0 40px;
+            font-weight: 700;
             font-size: 16px;
-            margin-right: 12px;
+            text-transform: uppercase;
         }
 
-        .activity-item {
+        .dashboard-activity-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .dashboard-activity-item {
             display: flex;
             align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid #f0f0f0;
+            gap: 14px;
+            min-width: 0;
+            padding: 14px;
+            border: 0;
+            border-left: 4px solid #667eea;
+            border-radius: 9px;
+            background: #f8fafc;
+            transition: background 0.2s ease, border-color 0.2s ease;
         }
 
-        .activity-item:last-child {
-            border-bottom: none;
+        .dashboard-activity-item:hover {
+            background: #f1f5f9;
+            border-left-color: #2563eb;
         }
 
-        .activity-info {
+        .dashboard-activity-item .activity-info {
             flex: 1;
+            min-width: 0;
         }
 
-        .activity-user {
+        .dashboard-activity-item .activity-user {
             font-weight: 600;
             color: #2c3e50;
-            margin-bottom: 4px;
+            margin-bottom: 6px;
+            overflow-wrap: anywhere;
         }
 
-        .activity-details {
-            font-size: 0.85em;
-            color: #7f8c8d;
+        .dashboard-activity-item .activity-details {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            color: #64748b;
+            font-size: 12px;
         }
 
-        .user-role {
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.75em;
+        .dashboard-login-item .user-role {
+            padding: 4px 8px;
+            border-radius: 5px;
+            background: #e0f2fe;
+            color: #0369a1;
+            font-size: 11px;
             font-weight: 500;
-            color: white;
         }
 
-        .activity-time {
-            font-size: 0.85em;
-            color: #95a5a6;
+        .dashboard-login-item .activity-ip {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+        }
+
+        .dashboard-activity-item .activity-time {
+            flex-shrink: 0;
+            color: #64748b;
+            font-size: 13px;
             font-weight: 500;
         }
 
@@ -391,32 +401,7 @@ $recent_activities = $pdo->query("
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge super-admin">Главный администратор</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="super_dashboard.php" class="nav-link active">🏠 Главная</a></li>
-                <li class="nav-section">Системное управление</li>
-                <li><a href="schools.php" class="nav-link">🏫 Учебные заведения</a></li>
-                <li><a href="users.php" class="nav-link">👥 Пользователи системы</a></li>
-                <li><a href="roles.php" class="nav-link">🔐 Роли и права</a></li>
-                <li><a href="curriculum.php" class="nav-link">📚 Учебные планы</a></li>
-                <li><a href="academic_periods.php" class="nav-link">📅 Учебные периоды</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Системные отчеты</a></li>
-                <li><a href="audit_logs.php" class="nav-link">🔎 Аудит действий</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $adminActivePage = 'super_dashboard'; require __DIR__ . '/../includes/admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -432,7 +417,7 @@ $recent_activities = $pdo->query("
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <!-- Статистика системы -->
@@ -503,9 +488,9 @@ $recent_activities = $pdo->query("
                                 <p>Нет добавленных школ</p>
                             </div>
                         <?php else: ?>
-                            <div class="activities-list">
+                            <div class="activities-list dashboard-activity-list">
                                 <?php foreach ($recent_schools as $school): ?>
-                                    <div class="activity-item">
+                                    <div class="activity-item dashboard-activity-item">
                                         <div class="activity-info">
                                             <div class="activity-user"><?php echo htmlspecialchars($school['full_name']); ?></div>
                                             <div class="activity-details">
@@ -527,7 +512,7 @@ $recent_activities = $pdo->query("
                 <div class="dashboard-card">
                     <div class="card-header">
                         <h3>Последние входы в систему</h3>
-                        <a href="system_reports.php" class="btn-link">Все отчеты →</a>
+                        <a href="reports.php" class="btn-link">Все отчеты →</a>
                     </div>
                     <div class="card-content">
                         <?php if (empty($recent_activities)): ?>
@@ -535,17 +520,20 @@ $recent_activities = $pdo->query("
                                 <p>Нет данных о входах</p>
                             </div>
                         <?php else: ?>
-                            <div class="activities-list">
+                            <div class="activities-list dashboard-activity-list">
                                 <?php foreach ($recent_activities as $activity): ?>
-                                    <div class="activity-item">
+                                    <div class="activity-item dashboard-activity-item dashboard-login-item">
                                         <div class="user-avatar">
-                                            <?php echo strtoupper(substr($activity['full_name'], 0, 1)); ?>
+                                            <?php
+                                            preg_match('/^./us', (string)$activity['full_name'], $initial);
+                                            echo htmlspecialchars($initial[0] ?? '?');
+                                            ?>
                                         </div>
                                         <div class="activity-info">
                                             <div class="activity-user"><?php echo htmlspecialchars($activity['full_name']); ?></div>
                                             <div class="activity-details">
-                                                <span class="user-role role-<?php echo $activity['role_name']; ?>">
-                                                    <?php echo getRoleName($activity['role_name']); ?>
+                                                <span class="user-role role-<?php echo htmlspecialchars((string)$activity['role_name'], ENT_QUOTES, 'UTF-8'); ?>">
+                                                    <?php echo htmlspecialchars(getRoleDisplayName((string)$activity['role_name'])); ?>
                                                 </span>
                                                 <span class="activity-ip">• IP: <?php echo htmlspecialchars($activity['ip_address']); ?></span>
                                             </div>

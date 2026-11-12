@@ -1,27 +1,54 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once __DIR__ . '/../includes/periods_helper.php';
 
 requireTeacher();
 
 $pdo = getDatabaseConnection();
 $teacher_id = (int)$_SESSION['user_id'];
 $school_id = (int)$_SESSION['user_school_id'];
+$periods = getSchoolPeriods($pdo, $school_id);
+$current_period = getCurrentPeriod($pdo, $school_id);
+$selected_period_id = filter_input(INPUT_GET, 'period_id', FILTER_VALIDATE_INT)
+    ?: (int)($current_period['id'] ?? 0);
+$selected_period = null;
+foreach ($periods as $period) {
+    if ((int)$period['id'] === $selected_period_id) {
+        $selected_period = $period;
+        break;
+    }
+}
+$period_locked_readonly = $selected_period
+    && (int)$selected_period['is_locked'] === 1
+    && !hasPermission('edit_locked_periods');
 $selected_class_id = filter_input(INPUT_GET, 'class_id', FILTER_VALIDATE_INT) ?: 0;
-$selected_date = $_GET['date'] ?? date('Y-m-d');
+$selected_date = $_GET['date'] ?? ($selected_period['start_date'] ?? date('Y-m-d'));
 $date_object = DateTime::createFromFormat('Y-m-d', $selected_date);
 if (!$date_object || $date_object->format('Y-m-d') !== $selected_date) {
-    $selected_date = date('Y-m-d');
+    $selected_date = $selected_period['start_date'] ?? date('Y-m-d');
+}
+if ($selected_period && ($selected_date < $selected_period['start_date'] || $selected_date > $selected_period['end_date'])) {
+    $selected_date = $selected_period['start_date'];
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_token();
     $selected_class_id = (int)($_POST['class_id'] ?? 0);
     $selected_date = $_POST['lesson_date'] ?? date('Y-m-d');
+    $selected_period_id = (int)($_POST['period_id'] ?? 0);
     $statuses = $_POST['status'] ?? [];
 
-    if (!canManageClass($selected_class_id, $pdo)) {
+    $date_check = DateTime::createFromFormat('Y-m-d', $selected_date);
+    $period = $date_check && $date_check->format('Y-m-d') === $selected_date
+        ? getPeriodForDate($pdo, $school_id, $selected_date)
+        : null;
+    if (!$period || (int)$period['id'] !== $selected_period_id) {
+        $_SESSION['error_message'] = 'Дата не входит в выбранный активный учебный период.';
+    } elseif ((int)$period['is_locked'] === 1 && !hasPermission('edit_locked_periods')) {
+        $_SESSION['error_message'] = 'Учебный период закрыт. Изменение посещаемости запрещено.';
+    } elseif (!canManageClass($selected_class_id, $pdo)) {
         $_SESSION['error_message'] = 'У вас нет доступа к этому классу.';
     } else {
         try {
@@ -49,11 +76,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
-            $_SESSION['error_message'] = 'Ошибка сохранения посещаемости: ' . $e->getMessage();
+            $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         }
     }
 
-    header('Location: class_journal.php?class_id=' . $selected_class_id . '&date=' . urlencode($selected_date));
+    header('Location: class_journal.php?class_id=' . $selected_class_id . '&date=' . urlencode($selected_date) . '&period_id=' . $selected_period_id);
     exit;
 }
 
@@ -62,9 +89,10 @@ $classes_stmt->execute([$school_id]);
 $classes = $classes_stmt->fetchAll();
 
 $students = [];
-if ($selected_class_id > 0 && canManageClass($selected_class_id, $pdo)) {
-    $students_stmt = $pdo->prepare("\n        SELECT u.id, u.full_name, COALESCE(a.status, 'present') AS attendance_status\n        FROM users u\n        LEFT JOIN attendance a ON a.student_id = u.id AND a.lesson_date = ?\n        JOIN classes c ON c.id = u.class_id AND c.school_id = ?\n        WHERE u.class_id = ? AND u.is_active = 1\n        GROUP BY u.id, u.full_name, a.status\n        ORDER BY u.full_name\n    ");
-    $students_stmt->execute([$selected_date, $school_id, $selected_class_id]);
+if ($selected_period && $selected_date >= $selected_period['start_date'] && $selected_date <= $selected_period['end_date']
+    && $selected_class_id > 0 && canManageClass($selected_class_id, $pdo)) {
+    $students_stmt = $pdo->prepare("\n        SELECT u.id, u.full_name, COALESCE(a.status, 'present') AS attendance_status\n        FROM users u\n        LEFT JOIN attendance a ON a.student_id = u.id AND a.lesson_date = ?\n        JOIN classes c ON c.id = u.class_id AND c.school_id = ?\n            WHERE u.class_id = ? AND u.school_id = ? AND u.is_active = 1\n        GROUP BY u.id, u.full_name, a.status\n        ORDER BY u.full_name\n    ");
+    $students_stmt->execute([$selected_date, $school_id, $selected_class_id, $school_id]);
     $students = $students_stmt->fetchAll();
 }
 
@@ -88,32 +116,7 @@ foreach (['success_message', 'error_message'] as $message_key) {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge">Учитель</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                <li class="nav-section">Учебный процесс</li>
-                <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
-                <li><a href="class_journal.php" class="nav-link active">📋 Классный журнал</a></li>
-                <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
-                <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчёты</a></li>
-                <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $teacherActivePage = 'class_journal'; require __DIR__ . '/../includes/teacher_sidebar.php'; ?>
     <main class="main-content">
         <header class="content-header">
             <div class="header-title">
@@ -126,6 +129,16 @@ foreach (['success_message', 'error_message'] as $message_key) {
             <?php if (isset($messages['error_message'])): ?><div class="alert alert-error"><?php echo htmlspecialchars($messages['error_message']); ?></div><?php endif; ?>
 
             <form method="GET" class="dashboard-card" style="padding: 22px; display: flex; gap: 16px; align-items: end; flex-wrap: wrap;">
+                <label>Учебный период
+                    <select name="period_id" required onchange="this.form.submit()">
+                        <option value="">Выберите период</option>
+                        <?php foreach ($periods as $period_option): ?>
+                            <option value="<?php echo (int)$period_option['id']; ?>" <?php echo $selected_period_id === (int)$period_option['id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($period_option['name'], ENT_QUOTES, 'UTF-8'); ?><?php echo $period_option['is_locked'] ? ' 🔒' : ''; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
                 <label>Класс
                     <select name="class_id" required>
                         <option value="">Выберите класс</option>
@@ -140,16 +153,24 @@ foreach (['success_message', 'error_message'] as $message_key) {
                 <button class="btn btn-primary" type="submit">Открыть журнал</button>
             </form>
 
-            <?php if ($selected_class_id > 0): ?>
+            <?php if (!$periods): ?>
+                <div class="alert alert-warning">В школе нет активных учебных периодов. <a href="../school_admin/academic_periods.php">Создайте период</a>.</div>
+            <?php elseif (!$selected_period): ?>
+                <div class="alert alert-warning">Выберите активный учебный период.</div>
+            <?php elseif ($period_locked_readonly): ?>
+                <div class="alert alert-warning">🔒 Период закрыт: изменение посещаемости недоступно.</div>
+            <?php endif; ?>
+            <?php if ($selected_class_id > 0 && $selected_period): ?>
                 <form method="POST" class="dashboard-card" style="padding: 22px;">
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="class_id" value="<?php echo $selected_class_id; ?>">
+                    <input type="hidden" name="period_id" value="<?php echo $selected_period_id; ?>">
                     <input type="hidden" name="lesson_date" value="<?php echo htmlspecialchars($selected_date); ?>">
                     <div class="card-header" style="margin: -22px -22px 18px;">
                         <h3>Посещаемость за <?php echo date('d.m.Y', strtotime($selected_date)); ?></h3>
                     </div>
                     <?php if (!$students): ?>
-                        <p class="empty-state">В выбранном классе нет учеников или у вас нет урока с этим классом.</p>
+                        <p class="empty-state">В выбранном классе нет учеников или у вас нет доступа.</p>
                     <?php else: ?>
                         <div class="admin-table" style="box-shadow: none;">
                             <table style="width: 100%;">
@@ -157,9 +178,13 @@ foreach (['success_message', 'error_message'] as $message_key) {
                                 <tbody>
                                 <?php foreach ($students as $student): ?>
                                     <tr>
-                                        <td><?php echo htmlspecialchars($student['full_name']); ?></td>
                                         <td>
-                                            <select name="status[<?php echo $student['id']; ?>]">
+                                            <a href="student.php?id=<?php echo (int)$student['id']; ?>&amp;class_id=<?php echo (int)$selected_class_id; ?>&amp;back=class_journal&amp;date=<?php echo htmlspecialchars($selected_date, ENT_QUOTES, 'UTF-8'); ?>&amp;period_id=<?php echo (int)$selected_period_id; ?>">
+                                                <?php echo htmlspecialchars($student['full_name'], ENT_QUOTES, 'UTF-8'); ?>
+                                            </a>
+                                        </td>
+                                        <td>
+                                            <select name="status[<?php echo $student['id']; ?>]" <?php echo $period_locked_readonly ? 'disabled' : ''; ?>>
                                                 <option value="present" <?php echo $student['attendance_status'] === 'present' ? 'selected' : ''; ?>>Присутствует</option>
                                                 <option value="absent" <?php echo $student['attendance_status'] === 'absent' ? 'selected' : ''; ?>>Отсутствует</option>
                                                 <option value="late" <?php echo $student['attendance_status'] === 'late' ? 'selected' : ''; ?>>Опоздал</option>
@@ -170,7 +195,9 @@ foreach (['success_message', 'error_message'] as $message_key) {
                                 </tbody>
                             </table>
                         </div>
-                        <button class="btn btn-primary" type="submit" style="margin-top: 18px;">Сохранить посещаемость</button>
+                        <?php if (!$period_locked_readonly): ?>
+                            <button class="btn btn-primary" type="submit" style="margin-top: 18px;">Сохранить посещаемость</button>
+                        <?php endif; ?>
                     <?php endif; ?>
                 </form>
             <?php endif; ?>

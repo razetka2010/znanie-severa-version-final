@@ -208,6 +208,46 @@
 /* Форма учебного периода */
 .period-form {
     padding: 30px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 22px;
+    align-items: end;
+}
+
+.period-form > label:not(.checkbox-label) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    color: #2c3e50;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.period-form > label:not(.checkbox-label) input {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid #d5dbe3;
+    border-radius: 6px;
+    background: #fff;
+    color: #2c3e50;
+    font: inherit;
+}
+
+.period-form > label:not(.checkbox-label) input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
+}
+
+.period-form > .checkbox-label {
+    align-self: center;
+    min-height: 28px;
+}
+
+.period-form > .form-actions {
+    grid-column: 1 / -1;
 }
 
 .form-section {
@@ -421,6 +461,8 @@
 
     .period-form {
         padding: 20px;
+        grid-template-columns: 1fr;
+        gap: 14px;
     }
 
     .form-section {
@@ -450,6 +492,10 @@
     .form-actions .btn {
         width: 100%;
         text-align: center;
+    }
+
+    .period-form > .form-actions {
+        grid-column: auto;
     }
 
     .view-section {

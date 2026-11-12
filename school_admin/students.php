@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -8,21 +8,12 @@ requireSchoolAdmin();
 
 $pdo = getDatabaseConnection();
 
-// Получаем school_id из сессии с проверкой
-$school_id = $_SESSION['user_school_id'] ?? null;
-if (!$school_id) {
-    $_SESSION['error_message'] = "Школа не определена. Обратитесь к администратору.";
-    header('Location: dashboard.php');
-    exit;
-}
+$schoolContext = getSchoolAdminContext($pdo);
+$school_id = $schoolContext['school_id'];
+$school = $schoolContext['school'];
 
-// Получаем информацию о школе
-$school_stmt = $pdo->prepare("SELECT full_name, short_name FROM schools WHERE id = ?");
-$school_stmt->execute([$school_id]);
-$school = $school_stmt->fetch();
-
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$student_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$student_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 // Получаем ID роли ученика (если есть)
 $student_role_id = null;
@@ -115,18 +106,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Добавляем дополнительную информацию об ученике
                 if ($birth_date || $address) {
                     try {
-                        $pdo->exec("
-                            CREATE TABLE IF NOT EXISTS student_info (
-                                id INT PRIMARY KEY AUTO_INCREMENT,
-                                user_id INT NOT NULL,
-                                birth_date DATE,
-                                address TEXT,
-                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-                            )
-                        ");
-
                         $stmt = $pdo->prepare("
                             INSERT INTO student_info (user_id, birth_date, address) 
                             VALUES (?, ?, ?)
@@ -141,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: students.php');
                 exit;
             } catch (PDOException $e) {
-                $error = "Ошибка при добавлении ученика: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -207,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: students.php');
                 exit;
             } catch (PDOException $e) {
-                $error = "Ошибка при обновлении данных ученика: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -218,11 +197,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Обработка удаления ученика
 if ($action === 'delete' && $student_id > 0) {
     try {
-        // Деактивируем пользователя (не удаляем полностью)
-        $stmt = $pdo->prepare("UPDATE users SET is_active = FALSE WHERE id = ? AND school_id = ?");
-        $stmt->execute([$student_id, $school_id]);
+        $deactivated = deactivateSchoolUser($pdo, $student_id, (int)$school_id);
 
-        if ($stmt->rowCount() > 0) {
+        if ($deactivated) {
             $_SESSION['success_message'] = "Ученик успешно удален!";
         } else {
             $_SESSION['error_message'] = "Ученик не найден или у вас нет прав для его удаления";
@@ -230,7 +207,7 @@ if ($action === 'delete' && $student_id > 0) {
         header('Location: students.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении ученика: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: students.php');
         exit;
     }
@@ -257,7 +234,7 @@ if (($action === 'edit' || $action === 'view') && $student_id > 0) {
             exit;
         }
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при получении данных ученика: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: students.php');
         exit;
     }
@@ -527,38 +504,10 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-            <?php if ($school): ?>
-                <div class="school-info">
-                    <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                </div>
-            <?php endif; ?>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge school-admin">Администратор школы</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li class="nav-section">Управление школой</li>
-                <li><a href="classes.php" class="nav-link">👨‍🏫 Классы</a></li>
-                <li><a href="teachers.php" class="nav-link">👥 Учителя</a></li>
-                <li><a href="students.php" class="nav-link active">🎓 Ученики</a></li>
-                <li><a href="parents.php" class="nav-link">👨‍👩‍👧‍👦 Родители</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="grade_types.php" class="nav-link">📊 Система оценок</a></li>
-                <li><a href="grade_weights.php" class="nav-link">⚖️ Веса оценок</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php
+    $schoolAdminActivePage = 'students';
+    require __DIR__ . '/../includes/school_admin_sidebar.php';
+    ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -573,15 +522,15 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -589,6 +538,9 @@ try {
                 <div class="admin-form">
                     <h2><?php echo $action === 'add' ? 'Добавить ученика' : 'Редактировать данные ученика'; ?></h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$student_id; ?>">
                         <div class="form-section">
                             <h3>Основная информация</h3>
                             <div class="form-grid">
@@ -751,6 +703,12 @@ try {
                             <a href="students.php?action=add" class="btn btn-primary">➕ Добавить первого ученика</a>
                         </div>
                     <?php else: ?>
+                        <div class="admin-filters">
+                            <div class="filter-group">
+                                <label for="studentTableSearch">Поиск ученика</label>
+                                <input type="search" id="studentTableSearch" placeholder="ФИО, логин, email или класс..." autocomplete="off">
+                            </div>
+                        </div>
                         <table class="data-table">
                             <thead>
                             <tr>
@@ -780,7 +738,7 @@ try {
                                         <div class="table-actions">
                                             <a href="students.php?action=view&id=<?php echo $student['id']; ?>" class="btn-action btn-view" title="Просмотр">👁️</a>
                                             <a href="students.php?action=edit&id=<?php echo $student['id']; ?>" class="btn-action btn-edit" title="Редактировать">✏️</a>
-                                            <a href="students.php?action=delete&id=<?php echo $student['id']; ?>" class="btn-action btn-delete" title="Удалить" onclick="return confirm('Вы уверены, что хотите удалить ученика &laquo;<?php echo htmlspecialchars($student['full_name']); ?>&raquo;?')">🗑️</a>
+                                            <?php echo csrf_post_button('delete', (int)$student['id'], '🗑️', 'btn-action btn-delete', 'Вы уверены, что хотите удалить этого ученика?'); ?>
                                         </div>
                                     </td>
                                 </tr>
@@ -793,5 +751,16 @@ try {
         </div>
     </main>
 </div>
+<script>
+    const studentTableSearch = document.getElementById('studentTableSearch');
+    if (studentTableSearch) {
+        studentTableSearch.addEventListener('input', function() {
+            const query = this.value.trim().toLowerCase();
+            document.querySelectorAll('.students-container .data-table tbody tr').forEach(row => {
+                row.hidden = query !== '' && !row.textContent.toLowerCase().includes(query);
+            });
+        });
+    }
+</script>
 </body>
 </html>

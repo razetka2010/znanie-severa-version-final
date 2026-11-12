@@ -72,6 +72,56 @@ body {
     color: #fff !important;
     border-radius: 999px !important;
     padding: 4px 9px !important;
+    font-size: 11px !important;
+    line-height: 1.2;
+    text-transform: none !important;
+}
+
+.sidebar .user-info .role-badge {
+    display: inline-block;
+    margin: 0 !important;
+}
+
+.user-details {
+    margin-top: 8px;
+    color: rgba(255, 255, 255, 0.72) !important;
+    font-size: 12px;
+}
+
+.logout-form {
+    display: block;
+    margin: 0;
+}
+
+.sidebar .logout-form > button.logout-button {
+    display: flex;
+    align-items: center;
+    width: calc(100% - 12px);
+    min-height: 46px;
+    margin-right: 12px;
+    padding: 12px 20px;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 0;
+    border-left: 3px solid transparent;
+    border-radius: 0 12px 12px 0;
+    background: transparent !important;
+    color: rgba(255, 255, 255, 0.86) !important;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+.sidebar .logout-form > button.logout-button:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: #fff !important;
+    border-left-color: #60a5fa;
+}
+
+.sidebar .logout-form > button.logout-button:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.8);
+    outline-offset: -2px;
 }
 
 .main-content {
@@ -170,6 +220,15 @@ table td {
 }
 
 @media (max-width: 768px) {
+    .sidebar .logout-form > button.logout-button {
+        width: 100%;
+        margin-right: 0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        min-height: 44px;
+        font-size: 13px;
+    }
+
     .content-header {
         padding: 20px 16px !important;
     }

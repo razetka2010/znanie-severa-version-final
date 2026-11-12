@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -51,21 +51,7 @@ $actions = $pdo->query("SELECT DISTINCT action FROM user_logs ORDER BY action")-
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header"><h1>Знание Севера</h1><p>Электронный дневник</p></div>
-        <nav class="sidebar-nav">
-            <div class="user-info"><strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong><span class="role-badge">Главный администратор</span></div>
-            <ul class="nav-menu">
-                <li><a href="super_dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li><a href="schools.php" class="nav-link">🏫 Учебные заведения</a></li>
-                <li><a href="users.php" class="nav-link">👥 Пользователи</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Системные отчёты</a></li>
-                <li><a href="audit_logs.php" class="nav-link active">🔎 Аудит действий</a></li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $adminActivePage = 'audit_logs'; require __DIR__ . '/../includes/admin_sidebar.php'; ?>
     <main class="main-content">
         <header class="content-header">
             <div class="header-title"><h1>Аудит действий</h1><p>Последние изменения пользователей в системе</p></div>

@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/config/session.php';
 
 $role = $_SESSION['user_role'] ?? null;
 $redirectTarget = 'login.php';

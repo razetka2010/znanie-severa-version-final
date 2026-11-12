@@ -1,40 +1,51 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once __DIR__ . '/../includes/grades_helper.php';
+require_once __DIR__ . '/../includes/periods_helper.php';
 
 requireStudent();
 
 $pdo = getDatabaseConnection();
 $student_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
+$school_periods = getSchoolPeriods($pdo, (int)$school_id);
+$current_period = getCurrentPeriod($pdo, (int)$school_id);
+$selected_period_id = isset($_GET['period_id']) ? (int)$_GET['period_id'] : (int)($current_period['id'] ?? 0);
+$selected_period = null;
+foreach ($school_periods as $period) {
+    if ((int)$period['id'] === $selected_period_id) {
+        $selected_period = $period;
+        break;
+    }
+}
 
 // Получаем информацию о ученике
 $student_stmt = $pdo->prepare("
     SELECT u.*, c.name as class_name, c.grade_level 
     FROM users u 
     LEFT JOIN classes c ON u.class_id = c.id 
-    WHERE u.id = ?
+    WHERE u.id = ? AND u.school_id = ?
 ");
-$student_stmt->execute([$student_id]);
+$student_stmt->execute([$student_id, $school_id]);
 $student = $student_stmt->fetch();
 
 // Получаем параметры фильтрации
 $selected_subject = isset($_GET['subject']) ? intval($_GET['subject']) : 0;
-$selected_quarter = isset($_GET['quarter']) ? intval($_GET['quarter']) : 0;
 $selected_month = isset($_GET['month']) ? $_GET['month'] : '';
 
 // Получаем все предметы ученика
 $subjects = [];
 try {
     $stmt = $pdo->prepare("
-        SELECT DISTINCT s.id, s.name 
-        FROM subjects s 
-        JOIN schedule sch ON s.id = sch.subject_id 
-        WHERE sch.class_id = ? 
+        SELECT DISTINCT s.id, s.name
+        FROM subjects s
+        JOIN schedule sch ON s.id = sch.subject_id AND s.school_id = sch.school_id
+        WHERE sch.class_id = ? AND sch.school_id = ? AND s.school_id = ?
         ORDER BY s.name
     ");
-    $stmt->execute([$student['class_id']]);
+    $stmt->execute([$student['class_id'], $school_id, $school_id]);
     $subjects = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении предметов: " . $e->getMessage());
@@ -52,38 +63,35 @@ try {
             s.name as subject_name,
             s.id as subject_id,
             u.full_name as teacher_name,
-            COALESCE(gw.weight, 1) AS grade_weight,
-            DATE_FORMAT(g.lesson_date, '%Y-%m') as month,
-            CASE 
-                WHEN MONTH(g.lesson_date) BETWEEN 9 AND 12 THEN 1
-                WHEN MONTH(g.lesson_date) BETWEEN 1 AND 3 THEN 2
-                WHEN MONTH(g.lesson_date) BETWEEN 4 AND 5 THEN 3
-                WHEN MONTH(g.lesson_date) BETWEEN 6 AND 8 THEN 4
-                ELSE 0
-            END as quarter
+            gt.name AS grade_type_name,
+            gt.default_weight_id,
+            gw.name AS grade_weight_name,
+            gw.weight AS grade_weight_value,
+            default_gw.name AS default_weight_name,
+            default_gw.weight AS default_weight_value,
+            default_gw.is_active AS default_weight_active,
+            DATE_FORMAT(g.lesson_date, '%Y-%m') as month
         FROM grades g 
-        JOIN subjects s ON g.subject_id = s.id 
-        JOIN users u ON g.teacher_id = u.id 
-        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
-        WHERE g.student_id = ? 
+        JOIN users student ON student.id = g.student_id AND student.school_id = ?
+        JOIN subjects s ON g.subject_id = s.id AND s.school_id = student.school_id
+        JOIN users u ON g.teacher_id = u.id AND u.school_id = student.school_id
+        LEFT JOIN grade_types gt ON gt.id = g.grade_type_id AND gt.school_id = student.school_id
+        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.school_id = student.school_id
+        LEFT JOIN grade_weights default_gw ON default_gw.id = gt.default_weight_id AND default_gw.school_id = student.school_id
+        WHERE g.student_id = ?
     ";
 
-    $params = [$student_id];
+    $params = [$school_id, $student_id];
 
     if ($selected_subject > 0) {
         $query .= " AND g.subject_id = ?";
         $params[] = $selected_subject;
     }
 
-    if ($selected_quarter > 0) {
-        $query .= " AND CASE 
-            WHEN MONTH(g.lesson_date) BETWEEN 9 AND 12 THEN 1
-            WHEN MONTH(g.lesson_date) BETWEEN 1 AND 3 THEN 2
-            WHEN MONTH(g.lesson_date) BETWEEN 4 AND 5 THEN 3
-            WHEN MONTH(g.lesson_date) BETWEEN 6 AND 8 THEN 4
-            ELSE 0
-        END = ?";
-        $params[] = $selected_quarter;
+    if ($selected_period) {
+        $query .= ' AND g.lesson_date BETWEEN ? AND ?';
+        $params[] = $selected_period['start_date'];
+        $params[] = $selected_period['end_date'];
     }
 
     if ($selected_month) {
@@ -104,87 +112,104 @@ try {
             $subject_grades[$subject_id] = [
                 'subject_name' => $grade['subject_name'],
                 'grades' => [],
-                'weighted_grades' => [],
+                'numeric_grade_rows' => [],
                 'average' => 0,
                 'count' => 0
             ];
         }
 
-        if (is_numeric($grade['grade_value'])) {
+        if (isNumericGrade($grade['grade_value'])) {
             $subject_grades[$subject_id]['grades'][] = $grade['grade_value'];
-            $subject_grades[$subject_id]['weighted_grades'][] = [
-                'value' => (float)$grade['grade_value'],
-                'weight' => (float)$grade['grade_weight']
-            ];
+            $subject_grades[$subject_id]['numeric_grade_rows'][] = $grade;
         }
     }
 
     // Рассчитываем средние баллы по предметам
     foreach ($subject_grades as $subject_id => &$data) {
-        if (!empty($data['grades'])) {
-            $weighted_sum = 0;
-            $weight_total = 0;
-            foreach ($data['weighted_grades'] as $weighted_grade) {
-                $weighted_sum += $weighted_grade['value'] * $weighted_grade['weight'];
-                $weight_total += $weighted_grade['weight'];
-            }
-            $data['average'] = $weight_total > 0 ? round($weighted_sum / $weight_total, 2) : 0;
-            $data['count'] = count($data['grades']);
-        }
-    }
-
-    // Группируем оценки по четвертям
-    foreach ($grades as $grade) {
-        $quarter = $grade['quarter'];
-        if (!isset($quarter_grades[$quarter])) {
-            $quarter_grades[$quarter] = [];
-        }
-        $quarter_grades[$quarter][] = $grade;
+        $data['average'] = calculateWeightedAverage($data['numeric_grade_rows']) ?? 0;
+        $data['count'] = count($data['numeric_grade_rows']);
     }
 
 } catch (PDOException $e) {
     error_log("Ошибка при получении оценок: " . $e->getMessage());
 }
 
-// Получаем статистику по четвертям
-$quarter_stats = [];
+// Загружаем отметки о пропусках и опозданиях для просмотра в истории.
+$attendance_records = [];
 try {
-    for ($q = 1; $q <= 4; $q++) {
-        $stmt = $pdo->prepare("
-            SELECT 
-                COUNT(*) as total_grades,
-                AVG(CAST(grade_value AS DECIMAL)) as average_grade,
-                COUNT(CASE WHEN grade_value = '5' THEN 1 END) as excellent,
-                COUNT(CASE WHEN grade_value = '4' THEN 1 END) as good,
-                COUNT(CASE WHEN grade_value = '3' THEN 1 END) as satisfactory,
-                COUNT(CASE WHEN grade_value = '2' THEN 1 END) as poor
-            FROM grades 
-            WHERE student_id = ? 
-            AND (
-                CASE 
-                    WHEN MONTH(lesson_date) BETWEEN 9 AND 12 THEN 1
-                    WHEN MONTH(lesson_date) BETWEEN 1 AND 3 THEN 2
-                    WHEN MONTH(lesson_date) BETWEEN 4 AND 5 THEN 3
-                    WHEN MONTH(lesson_date) BETWEEN 6 AND 8 THEN 4
-                    ELSE 0
-                END = ?
-            )
-            AND grade_value REGEXP '^[0-9]+$'
-        ");
-        $stmt->execute([$student_id, $q]);
-        $stats = $stmt->fetch();
+    $attendance_query = "
+        SELECT a.lesson_date, a.status
+        FROM attendance a
+        JOIN users u ON u.id = a.student_id AND u.school_id = ?
+        WHERE a.student_id = ? AND a.status IN ('absent', 'late')
+    ";
+    $attendance_params = [$school_id, $student_id];
+    if ($selected_period) {
+        $attendance_query .= ' AND a.lesson_date BETWEEN ? AND ?';
+        $attendance_params[] = $selected_period['start_date'];
+        $attendance_params[] = $selected_period['end_date'];
+    }
+    if ($selected_month !== '') {
+        $attendance_query .= " AND DATE_FORMAT(a.lesson_date, '%Y-%m') = ?";
+        $attendance_params[] = $selected_month;
+    }
+    $attendance_query .= ' ORDER BY a.lesson_date DESC';
+    $attendance_stmt = $pdo->prepare($attendance_query);
+    $attendance_stmt->execute($attendance_params);
+    $attendance_records = $attendance_stmt->fetchAll();
+} catch (PDOException $e) {
+    error_log('Ошибка при получении посещаемости ученика: ' . $e->getMessage());
+}
 
-        $quarter_stats[$q] = [
-            'total_grades' => $stats['total_grades'] ?? 0,
-            'average_grade' => round($stats['average_grade'] ?? 0, 2),
-            'excellent' => $stats['excellent'] ?? 0,
-            'good' => $stats['good'] ?? 0,
-            'satisfactory' => $stats['satisfactory'] ?? 0,
-            'poor' => $stats['poor'] ?? 0
+$attendance_by_date = [];
+foreach ($attendance_records as $attendance_record) {
+    $attendance_by_date[$attendance_record['lesson_date']] = $attendance_record['status'];
+}
+
+// Сводные оценки рассчитываются отдельно для каждого активного учебного периода.
+$period_stats = [];
+try {
+    $period_stmt = $pdo->prepare("
+        SELECT g.grade_value, g.grade_type_id, g.grade_weight_id, g.subject_id, g.lesson_date,
+               gt.default_weight_id, gw.weight AS grade_weight_value,
+               default_gw.weight AS default_weight_value,
+               default_gw.is_active AS default_weight_active
+        FROM grades g
+        JOIN users u ON u.id = g.student_id AND u.school_id = ?
+        LEFT JOIN grade_types gt ON gt.id = g.grade_type_id AND gt.school_id = u.school_id
+        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.school_id = u.school_id
+        LEFT JOIN grade_weights default_gw ON default_gw.id = gt.default_weight_id AND default_gw.school_id = u.school_id
+        WHERE g.student_id = ?
+    ");
+    $period_stmt->execute([$school_id, $student_id]);
+    $period_grade_rows = $period_stmt->fetchAll();
+
+    foreach ($school_periods as $period) {
+        $rows = array_values(array_filter($period_grade_rows, static function ($grade) use ($period) {
+            return $grade['lesson_date'] >= $period['start_date']
+                && $grade['lesson_date'] <= $period['end_date']
+                && isNumericGrade($grade['grade_value']);
+        }));
+        $period_subject_grades = [];
+        foreach ($rows as $grade) {
+            $period_subject_grades[$grade['subject_id']][] = $grade;
+        }
+        $period_subject_averages = [];
+        foreach ($period_subject_grades as $subject_rows) {
+            $period_subject_averages[] = calculateWeightedAverage($subject_rows);
+        }
+
+        $period_stats[(int)$period['id']] = [
+            'total_grades' => count($rows),
+            'average_grade' => calculateOverallAverage($period_subject_averages) ?? 0,
+            'excellent' => count(array_filter($rows, static function ($grade) { return $grade['grade_value'] === '5'; })),
+            'good' => count(array_filter($rows, static function ($grade) { return $grade['grade_value'] === '4'; })),
+            'satisfactory' => count(array_filter($rows, static function ($grade) { return $grade['grade_value'] === '3'; })),
+            'poor' => count(array_filter($rows, static function ($grade) { return $grade['grade_value'] === '2'; }))
         ];
     }
 } catch (PDOException $e) {
-    error_log("Ошибка при получении статистики по четвертям: " . $e->getMessage());
+    error_log("Ошибка при получении статистики по учебным периодам: " . $e->getMessage());
 }
 
 // Генерируем список месяцев для фильтра
@@ -193,11 +218,12 @@ try {
     $stmt = $pdo->prepare("
         SELECT DISTINCT DATE_FORMAT(lesson_date, '%Y-%m') as month,
                DATE_FORMAT(lesson_date, '%M %Y') as month_name
-        FROM grades 
-        WHERE student_id = ? 
-        ORDER BY lesson_date DESC
+        FROM grades g
+        JOIN users u ON u.id = g.student_id AND u.school_id = ?
+        WHERE g.student_id = ?
+        ORDER BY g.lesson_date DESC
     ");
-    $stmt->execute([$student_id]);
+    $stmt->execute([$school_id, $student_id]);
     $months = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении месяцев: " . $e->getMessage());
@@ -493,6 +519,20 @@ try {
         .grade-2 { background: #f8d7da; color: #721c24; border: 2px solid #dc3545; }
         .grade-ot { background: #e2e3e5; color: #383d41; border: 2px solid #6c757d; }
 
+        .attendance-record {
+            display: inline-block;
+            margin: 3px;
+            font-weight: 700;
+        }
+
+        .attendance-record.absent {
+            color: #dc3545;
+        }
+
+        .attendance-record.late {
+            color: #c88700;
+        }
+
         /* Предметы */
         .subjects-grid {
             display: grid;
@@ -729,33 +769,7 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель навигации -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Ученик</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?= htmlspecialchars($student['full_name']) ?></strong>
-                <span class="role-badge">Ученик</span>
-                <div class="user-details">
-                    <?= htmlspecialchars($student['class_name']) ?> класс
-                </div>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                <li class="nav-section">Учебный процесс</li>
-                <li><a href="grades.php" class="nav-link active">📝 Мои оценки</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
-                <li><a href="subjects.php" class="nav-link">📖 Предметы</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $studentActivePage = 'grades'; require __DIR__ . '/../includes/student_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -767,11 +781,11 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <!-- Фильтры -->
@@ -790,13 +804,14 @@ try {
                     </div>
 
                     <div class="form-group">
-                        <label>Четверть:</label>
-                        <select name="quarter" onchange="this.form.submit()">
-                            <option value="">Все четверти</option>
-                            <option value="1" <?= $selected_quarter == 1 ? 'selected' : '' ?>>1 четверть</option>
-                            <option value="2" <?= $selected_quarter == 2 ? 'selected' : '' ?>>2 четверть</option>
-                            <option value="3" <?= $selected_quarter == 3 ? 'selected' : '' ?>>3 четверть</option>
-                            <option value="4" <?= $selected_quarter == 4 ? 'selected' : '' ?>>4 четверть</option>
+                        <label>Учебный период:</label>
+                        <select name="period_id" onchange="this.form.submit()">
+                            <option value="">Все периоды</option>
+                            <?php foreach ($school_periods as $period): ?>
+                                <option value="<?= (int)$period['id'] ?>" <?= $selected_period_id === (int)$period['id'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($period['name'], ENT_QUOTES, 'UTF-8') ?><?= $period['is_locked'] ? ' 🔒' : '' ?>
+                                </option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
 
@@ -824,12 +839,20 @@ try {
                     <div class="stat-icon">📊</div>
                     <div class="stat-number">
                         <?php
-                        $total_grades = array_merge(...array_column($subject_grades, 'grades'));
-                        $overall_average = !empty($total_grades) ? round(array_sum($total_grades) / count($total_grades), 2) : 0;
+                        $total_grades = [];
+                        $subject_averages = [];
+                        foreach ($subject_grades as $subject_data) {
+                            $total_grades = array_merge($total_grades, $subject_data['grades']);
+                            if ($subject_data['count'] > 0) {
+                                $subject_averages[] = $subject_data['average'];
+                            }
+                        }
+                        $overall_average = calculateOverallAverage($subject_averages) ?? 0;
                         echo $overall_average ?: 'н/д';
                         ?>
                     </div>
                     <div class="stat-label">Общий средний балл</div>
+                    <small>Средний балл учитывает вес оценок: контрольные важнее домашних.</small>
                 </div>
 
                 <div class="stat-card success">
@@ -853,17 +876,17 @@ try {
                 </div>
             </div>
 
-            <!-- Статистика по четвертям -->
+            <!-- Статистика по учебным периодам -->
             <div class="section">
                 <div class="section-header">
-                    <h2 class="section-title">📅 Успеваемость по четвертям</h2>
+                    <h2 class="section-title">📅 Успеваемость по учебным периодам</h2>
                 </div>
 
                 <div class="quarters-grid">
-                    <?php for ($q = 1; $q <= 4; $q++): ?>
-                        <?php $stats = $quarter_stats[$q] ?? ['average_grade' => 0, 'total_grades' => 0]; ?>
-                        <div class="quarter-card quarter-<?= $q ?>">
-                            <div class="quarter-title"><?= $q ?> четверть</div>
+                    <?php foreach ($school_periods as $period): ?>
+                        <?php $stats = $period_stats[(int)$period['id']] ?? ['average_grade' => 0, 'total_grades' => 0]; ?>
+                        <div class="quarter-card quarter-<?= (int)$period['id'] % 4 + 1 ?>">
+                            <div class="quarter-title"><?= htmlspecialchars($period['name'], ENT_QUOTES, 'UTF-8') ?><?= $period['is_locked'] ? ' 🔒' : '' ?></div>
                             <div class="quarter-average" style="color: <?= $stats['average_grade'] >= 4.5 ? '#27ae60' : ($stats['average_grade'] >= 3.5 ? '#f39c12' : '#e74c3c') ?>">
                                 <?= $stats['average_grade'] ?: 'н/д' ?>
                             </div>
@@ -886,7 +909,10 @@ try {
                                 </div>
                             </div>
                         </div>
-                    <?php endfor; ?>
+                    <?php endforeach; ?>
+                    <?php if (!$school_periods): ?>
+                        <p>Учебные периоды ещё не настроены.</p>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -919,13 +945,15 @@ try {
 
                                     <div class="grades-list">
                                         <?php
-                                        $recent_grades = array_slice($data['grades'], 0, 10);
+                                        $recent_grades = array_slice($data['numeric_grade_rows'], 0, 10);
                                         foreach ($recent_grades as $grade):
+                                            $grade_title = 'Тип работы: ' . ($grade['grade_type_name'] ?: 'не указан')
+                                                . '; вес: ' . number_format(effectiveGradeWeight($grade), 2, '.', '');
                                             ?>
-                                            <span class="grade-badge grade-<?= $grade ?>"><?= $grade ?></span>
+                                            <span class="grade-badge grade-<?= htmlspecialchars(strtolower((string)$grade['grade_value']), ENT_QUOTES, 'UTF-8') ?>" title="<?= htmlspecialchars($grade_title, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string)$grade['grade_value'], ENT_QUOTES, 'UTF-8') ?></span>
                                         <?php endforeach; ?>
-                                        <?php if (count($data['grades']) > 10): ?>
-                                            <span style="color: #7f8c8d; font-size: 0.9em;">+<?= count($data['grades']) - 10 ?></span>
+                                        <?php if (count($data['numeric_grade_rows']) > 10): ?>
+                                            <span style="color: #7f8c8d; font-size: 0.9em;">+<?= count($data['numeric_grade_rows']) - 10 ?></span>
                                         <?php endif; ?>
                                     </div>
                                 <?php else: ?>
@@ -940,6 +968,24 @@ try {
                         <h3>Нет оценок</h3>
                         <p>Оценки появятся здесь после их выставления учителями</p>
                     </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <h2 class="section-title">📅 Посещаемость</h2>
+                </div>
+                <?php if ($attendance_records): ?>
+                    <div class="grades-list">
+                        <?php foreach ($attendance_records as $attendance_record): ?>
+                            <span class="attendance-record <?= $attendance_record['status'] === 'absent' ? 'absent' : 'late' ?>">
+                                <?= $attendance_record['status'] === 'absent' ? 'Н' : 'О' ?>
+                                — <?= htmlspecialchars(date('d.m.Y', strtotime($attendance_record['lesson_date'])), ENT_QUOTES, 'UTF-8') ?>
+                            </span>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <p>Нет отметок о пропусках или опозданиях за выбранный период.</p>
                 <?php endif; ?>
             </div>
 
@@ -965,11 +1011,24 @@ try {
                         <tbody>
                         <?php foreach ($grades as $grade): ?>
                             <tr>
-                                <td><?= date('d.m.Y', strtotime($grade['lesson_date'])) ?></td>
+                                <td>
+                                    <?= htmlspecialchars(date('d.m.Y', strtotime($grade['lesson_date'])), ENT_QUOTES, 'UTF-8') ?>
+                                    <?php if (($attendance_by_date[$grade['lesson_date']] ?? '') === 'absent'): ?>
+                                        <span class="attendance-record absent" title="Отсутствовал">Н</span>
+                                    <?php elseif (($attendance_by_date[$grade['lesson_date']] ?? '') === 'late'): ?>
+                                        <span class="attendance-record late" title="Опоздал">О</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td><?= htmlspecialchars($grade['subject_name']) ?></td>
                                 <td>
-                                            <span class="grade-badge grade-<?= strtolower($grade['grade_value']) ?>">
-                                                <?= $grade['grade_value'] ?>
+                                            <span class="grade-badge grade-<?= htmlspecialchars(strtolower((string)$grade['grade_value']), ENT_QUOTES, 'UTF-8') ?>">
+                                                <?php
+                                                $grade_title = 'Тип работы: ' . ($grade['grade_type_name'] ?: 'не указан')
+                                                    . '; вес: ' . number_format(effectiveGradeWeight($grade), 2, '.', '');
+                                                ?>
+                                                <span title="<?= htmlspecialchars($grade_title, ENT_QUOTES, 'UTF-8') ?>">
+                                                    <?= htmlspecialchars((string)$grade['grade_value'], ENT_QUOTES, 'UTF-8') ?>
+                                                </span>
                                             </span>
                                 </td>
                                 <td><?= htmlspecialchars($grade['teacher_name']) ?></td>
@@ -998,7 +1057,7 @@ try {
 
     // Автоматическое обновление страницы при изменении фильтров (если нужно)
     document.addEventListener('DOMContentLoaded', function() {
-        const filters = document.querySelectorAll('select[name="subject"], select[name="quarter"], select[name="month"]');
+        const filters = document.querySelectorAll('select[name="subject"], select[name="period_id"], select[name="month"]');
         filters.forEach(filter => {
             filter.addEventListener('change', function() {
                 // Можно добавить индикатор загрузки

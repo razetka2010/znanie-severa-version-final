@@ -125,23 +125,15 @@ function viewSchool(schoolId) {
 }
 
 function confirmDelete(schoolId) {
-    if (confirm('Вы уверены, что хотите удалить эту школу? Это действие нельзя отменить.')) {
-        deleteSchool(schoolId);
-    }
+    deleteSchool(schoolId);
 }
 
 function deleteSchool(schoolId) {
-    console.log('Удаление школы ID: ' + schoolId);
-
-    // Показываем индикатор загрузки
-    const deleteBtn = document.querySelector('.btn-delete[onclick="confirmDelete(' + schoolId + ')"]');
-    if (deleteBtn) {
-        deleteBtn.textContent = '⏳';
-        deleteBtn.disabled = true;
-    }
-
-    // Отправляем запрос на удаление
-    window.location.href = 'schools.php?action=delete&id=' + schoolId;
+    const form = Array.from(document.querySelectorAll('.csrf-action-form')).find(candidate =>
+        candidate.querySelector('[name="action"]').value === 'delete'
+        && candidate.querySelector('[name="id"]').value === String(schoolId)
+    );
+    if (form) form.requestSubmit();
 }
 
 function viewUsers(schoolId) {

@@ -478,6 +478,92 @@
         .fade-in {
             animation: fadeInUp 0.8s ease-out;
         }
+
+        .cookie-banner {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            z-index: 1100;
+            width: min(520px, calc(100% - 40px));
+            padding: 22px;
+            color: var(--text);
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22);
+        }
+
+        .cookie-banner[hidden] {
+            display: none;
+        }
+
+        .cookie-banner h2 {
+            margin-bottom: 8px;
+            font-size: 1.15rem;
+        }
+
+        .cookie-banner p {
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .cookie-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .cookie-actions button,
+        .cookie-settings-button {
+            padding: 10px 16px;
+            border: 1px solid #2c5aa0;
+            border-radius: 6px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .cookie-accept {
+            color: #fff;
+            background: #2c5aa0;
+        }
+
+        .cookie-reject {
+            color: #2c5aa0;
+            background: #fff;
+        }
+
+        .cookie-status {
+            margin-top: 10px;
+            color: #b91c1c !important;
+        }
+
+        .cookie-settings-button {
+            align-self: flex-start;
+            color: #bdc3c7;
+            background: transparent;
+            border-color: #bdc3c7;
+            text-align: left;
+        }
+
+        .cookie-settings-button:hover {
+            color: #fff;
+            border-color: #fff;
+        }
+
+        @media (max-width: 480px) {
+            .cookie-banner {
+                right: 10px;
+                bottom: 10px;
+                width: calc(100% - 20px);
+                padding: 18px;
+            }
+
+            .cookie-actions {
+                flex-direction: column;
+            }
+        }
     </style>
 </head>
 <body>
@@ -641,6 +727,7 @@
                 <a href="#about">О проекте</a>
                 <a href="#features">Возможности</a>
                 <a href="#audience">Для кого</a>
+                <button class="cookie-settings-button" id="cookie-settings" type="button">Настройки cookie</button>
             </div>
             <div class="footer-contacts">
                 <p><strong>Техническая поддержка:</strong></p>
@@ -655,9 +742,62 @@
     </div>
 </footer>
 
+<section class="cookie-banner" id="cookie-banner" role="dialog" aria-labelledby="cookie-title" aria-describedby="cookie-description" hidden>
+    <h2 id="cookie-title">Настройки cookie</h2>
+    <p id="cookie-description">Сайт использует технические cookie для работы авторизации и сохранения вашего выбора. Аналитические cookie сейчас не используются.</p>
+    <div class="cookie-actions">
+        <button class="cookie-accept" type="button" data-cookie-choice="all">Принять все</button>
+        <button class="cookie-reject" type="button" data-cookie-choice="necessary">Только необходимые</button>
+    </div>
+    <p class="cookie-status" id="cookie-status" role="status" aria-live="polite"></p>
+</section>
+
 <script>
-    // Простая анимация появления элементов при скролле
     document.addEventListener('DOMContentLoaded', function() {
+        const cookieBanner = document.getElementById('cookie-banner');
+        const cookieStatus = document.getElementById('cookie-status');
+        const cookieSettingsButton = document.getElementById('cookie-settings');
+        const consentCookieName = 'site_cookie_consent';
+
+        function readCookie(name) {
+            const cookie = document.cookie
+                .split(';')
+                .map(item => item.trim())
+                .find(item => item.startsWith(name + '='));
+
+            return cookie ? cookie.slice(name.length + 1) : null;
+        }
+
+        function saveCookieConsent(choice) {
+            const maxAge = 60 * 60 * 24 * 180;
+            const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+            document.cookie = consentCookieName + '=' + encodeURIComponent(choice)
+                + '; Max-Age=' + maxAge + '; Path=/; SameSite=Lax' + secure;
+
+            return readCookie(consentCookieName) === choice;
+        }
+
+        cookieBanner.hidden = ['all', 'necessary'].includes(readCookie(consentCookieName));
+
+        cookieBanner.querySelectorAll('[data-cookie-choice]').forEach(button => {
+            button.addEventListener('click', function() {
+                const choice = this.dataset.cookieChoice;
+                if (!saveCookieConsent(choice)) {
+                    cookieStatus.textContent = 'Не удалось сохранить выбор. Проверьте, разрешены ли cookie в браузере.';
+                    return;
+                }
+
+                cookieStatus.textContent = '';
+                cookieBanner.hidden = true;
+            });
+        });
+
+        cookieSettingsButton.addEventListener('click', function() {
+            cookieStatus.textContent = '';
+            cookieBanner.hidden = false;
+        });
+
+        // Простая анимация появления элементов при скролле
         const fadeElements = document.querySelectorAll('.fade-in');
 
         const observer = new IntersectionObserver((entries) => {

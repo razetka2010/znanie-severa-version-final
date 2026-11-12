@@ -44,21 +44,6 @@ class AcademicPeriodsManager {
             });
         });
 
-        // Установка текущего периода
-        document.querySelectorAll('.btn-current').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const periodId = e.target.closest('tr').dataset.id;
-                this.setCurrentPeriod(periodId);
-            });
-        });
-
-        // Удаление
-        document.querySelectorAll('.btn-delete').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const periodId = e.target.closest('tr').dataset.id;
-                this.confirmDelete(periodId);
-            });
-        });
     }
 
     loadInitialData() {
@@ -90,8 +75,15 @@ class AcademicPeriodsManager {
         }
 
         // Отправляем запрос на удаление
-        fetch(`academic_periods.php?action=delete&id=${id}`, {
-            method: 'GET'
+        const actionForm = Array.from(document.querySelectorAll('.csrf-action-form')).find(form =>
+            form.querySelector('[name="action"]').value === 'delete'
+            && form.querySelector('[name="id"]').value === String(id)
+        );
+        if (!actionForm) return;
+
+        fetch(actionForm.action, {
+            method: 'POST',
+            body: new FormData(actionForm)
         })
             .then(response => {
                 if (response.redirected) {
@@ -155,8 +147,15 @@ class AcademicPeriodsManager {
                 currentBtn.disabled = true;
             }
 
-            fetch(`academic_periods.php?action=set_current&id=${id}`, {
-                method: 'GET'
+            const actionForm = Array.from(document.querySelectorAll('.csrf-action-form')).find(form =>
+                form.querySelector('[name="action"]').value === 'set_current'
+                && form.querySelector('[name="id"]').value === String(id)
+            );
+            if (!actionForm) return;
+
+            fetch(actionForm.action, {
+                method: 'POST',
+                body: new FormData(actionForm)
             })
                 .then(response => {
                     if (response.redirected) {

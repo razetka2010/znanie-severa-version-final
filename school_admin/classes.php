@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -8,45 +8,12 @@ requireSchoolAdmin();
 
 $pdo = getDatabaseConnection();
 
-// Получаем school_id из сессии с проверкой
-$school_id = $_SESSION['user_school_id'] ?? null;
-if (!$school_id) {
-    $_SESSION['error_message'] = "Школа не определена. Обратитесь к администратору.";
-    header('Location: dashboard.php');
-    exit;
-}
+$schoolContext = getSchoolAdminContext($pdo);
+$school_id = $schoolContext['school_id'];
+$school = $schoolContext['school'];
 
-// Получаем информацию о школе
-$school_stmt = $pdo->prepare("SELECT full_name, short_name FROM schools WHERE id = ?");
-$school_stmt->execute([$school_id]);
-$school = $school_stmt->fetch();
-
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$class_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
-
-// Создаем таблицу классов если её нет
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS classes (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            school_id INT NOT NULL,
-            name VARCHAR(50) NOT NULL,
-            grade_level INT NOT NULL,
-            class_teacher_id INT,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
-            FOREIGN KEY (class_teacher_id) REFERENCES users(id) ON DELETE SET NULL
-        )
-    ");
-    $active_column = $pdo->query("SHOW COLUMNS FROM classes LIKE 'is_active'")->fetch();
-    if (!$active_column) {
-        $pdo->exec("ALTER TABLE classes ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER class_teacher_id");
-    }
-} catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы classes: " . $e->getMessage());
-}
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$class_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 // Обработка добавления класса
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -84,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: classes.php');
                 exit;
             } catch (PDOException $e) {
-                $error = "Ошибка при добавлении класса: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -127,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: classes.php');
                 exit;
             } catch (PDOException $e) {
-                $error = "Ошибка при обновлении класса: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -165,6 +132,13 @@ if ($action === 'delete' && $class_id > 0) {
             $related_data[] = "домашние задания ($homework_count записей)";
         }
 
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM class_subjects WHERE class_id = ? AND school_id = ?');
+        $stmt->execute([$class_id, $school_id]);
+        $class_subject_count = (int)$stmt->fetchColumn();
+        if ($class_subject_count > 0) {
+            $related_data[] = "предметы класса ($class_subject_count назначений)";
+        }
+
         // Если есть связанные данные, используем мягкое удаление
         if (!empty($related_data)) {
             // Мягкое удаление - деактивируем класс
@@ -192,7 +166,7 @@ if ($action === 'delete' && $class_id > 0) {
         header('Location: classes.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении класса: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: classes.php');
         exit;
     }
@@ -217,7 +191,7 @@ if (($action === 'edit' || $action === 'view') && $class_id > 0) {
             exit;
         }
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при получении данных класса: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: classes.php');
         exit;
     }
@@ -467,38 +441,10 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-            <?php if ($school): ?>
-                <div class="school-info">
-                    <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                </div>
-            <?php endif; ?>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge school-admin">Администратор школы</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li class="nav-section">Управление школой</li>
-                <li><a href="classes.php" class="nav-link active">👨‍🏫 Классы</a></li>
-                <li><a href="teachers.php" class="nav-link">👥 Учителя</a></li>
-                <li><a href="students.php" class="nav-link">🎓 Ученики</a></li>
-                <li><a href="parents.php" class="nav-link">👨‍👩‍👧‍👦 Родители</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="grade_types.php" class="nav-link">📊 Система оценок</a></li>
-                <li><a href="grade_weights.php" class="nav-link">⚖️ Веса оценок</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php
+    $schoolAdminActivePage = 'classes';
+    require __DIR__ . '/../includes/school_admin_sidebar.php';
+    ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -513,15 +459,15 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -529,6 +475,9 @@ try {
                 <div class="admin-form">
                     <h2><?php echo $action === 'add' ? 'Добавить класс' : 'Редактировать класс'; ?></h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$class_id; ?>">
                         <div class="form-grid">
                             <div class="form-group">
                                 <label for="name">Название класса *</label>
@@ -639,7 +588,7 @@ try {
                                         <div class="table-actions">
                                             <a href="classes.php?action=view&id=<?php echo $class['id']; ?>" class="btn-action btn-view" title="Просмотр">👁️</a>
                                             <a href="classes.php?action=edit&id=<?php echo $class['id']; ?>" class="btn-action btn-edit" title="Редактировать">✏️</a>
-                                            <a href="classes.php?action=delete&id=<?php echo $class['id']; ?>" class="btn-action btn-delete" title="Удалить" onclick="return confirmDelete('<?php echo htmlspecialchars($class['name']); ?>')">🗑️</a>
+                                            <?php echo csrf_post_button('delete', (int)$class['id'], '🗑️', 'btn-action btn-delete', 'Вы уверены, что хотите удалить этот класс?'); ?>
                                         </div>
                                     </td>
                                 </tr>

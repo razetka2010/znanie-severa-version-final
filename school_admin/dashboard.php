@@ -1,10 +1,12 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
+requireSchoolAdmin();
+
 // Проверяем что school_id установлен
-if ($_SESSION['user_role'] === 'school_admin' && empty($_SESSION['user_school_id'])) {
+if (empty($_SESSION['user_school_id'])) {
     header('Location: ../login.php?error=no_school');
     exit;
 }
@@ -63,38 +65,7 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-            <?php if ($school): ?>
-                <div class="school-info">
-                    <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                </div>
-            <?php endif; ?>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge school-admin">Администратор школы</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link active">🏠 Главная</a></li>
-                <li class="nav-section">Управление школой</li>
-                <li><a href="classes.php" class="nav-link">👨‍🏫 Классы</a></li>
-                <li><a href="teachers.php" class="nav-link">👥 Учителя</a></li>
-                <li><a href="students.php" class="nav-link">🎓 Ученики</a></li>
-                <li><a href="parents.php" class="nav-link">👨‍👩‍👧‍👦 Родители</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="grade_types.php" class="nav-link">📊 Система оценок</a></li>
-                <li><a href="grade_weights.php" class="nav-link">⚖️ Веса оценок</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $schoolAdminActivePage = 'dashboard'; require __DIR__ . '/../includes/school_admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -110,7 +81,7 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <!-- Статистика школы -->

@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -34,15 +34,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         header('Location: calendar.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при добавлении события: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: calendar.php');
         exit;
     }
 }
 
 // Обработка удаления события
-if (isset($_GET['delete_event'])) {
-    $event_id = intval($_GET['delete_event']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_event') {
+    $event_id = intval($_POST['id'] ?? 0);
 
     try {
         $stmt = $pdo->prepare("DELETE FROM teacher_events WHERE id = ? AND teacher_id = ?");
@@ -52,7 +52,7 @@ if (isset($_GET['delete_event'])) {
         header('Location: calendar.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении события: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: calendar.php');
         exit;
     }
@@ -259,27 +259,6 @@ function escapeICalText($text) {
     $text = str_replace(["\r\n", "\r", "\n"], "\\n", $text);
     $text = str_replace([',', ';', '\\'], ['\,', '\;', '\\\\'], $text);
     return $text;
-}
-
-// Создаем таблицу событий если её нет
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS teacher_events (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            teacher_id INT NOT NULL,
-            title VARCHAR(255) NOT NULL,
-            description TEXT,
-            event_date DATE NOT NULL,
-            event_time TIME,
-            event_type ENUM('lesson', 'meeting', 'event', 'reminder', 'exam') DEFAULT 'event',
-            class_id INT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (teacher_id) REFERENCES users(id),
-            FOREIGN KEY (class_id) REFERENCES classes(id)
-        )
-    ");
-} catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы teacher_events: " . $e->getMessage());
 }
 
 // Получаем события учителя
@@ -881,33 +860,7 @@ foreach ($events as $event) {
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель навигации -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?= htmlspecialchars($teacher['full_name']) ?></strong>
-                <span class="role-badge">Учитель</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                <li class="nav-section">Учебный процесс</li>
-                <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
-                <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
-                <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
-                <li><a href="calendar.php" class="nav-link active">🗓️ Календарь</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчёты</a></li>
-                <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $teacherActivePage = 'calendar'; require __DIR__ . '/../includes/teacher_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -919,11 +872,11 @@ foreach ($events as $event) {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <div class="calendar-container">
@@ -931,6 +884,7 @@ foreach ($events as $event) {
                 <div class="calendar-sidebar">
                     <h3 style="margin-bottom: 15px;">➕ Добавить событие</h3>
                     <form method="POST" class="event-form">
+                        <?php echo csrf_field(); ?>
                         <input type="hidden" name="action" value="add_event">
 
                         <div class="form-group">
@@ -1056,14 +1010,14 @@ foreach ($events as $event) {
                                 ?>
 
                                 <?php foreach ($upcoming_events as $event): ?>
-                                    <div class="event-card <?= $event['event_type'] ?>">
+                                    <div class="event-card <?= htmlspecialchars($event['event_type'], ENT_QUOTES, 'UTF-8') ?>">
                                         <div style="display: flex; justify-content: space-between; align-items: start;">
                                             <div style="flex: 1;">
                                                 <strong><?= htmlspecialchars($event['title']) ?></strong>
                                                 <div style="font-size: 0.8em; color: #666; margin-top: 4px;">
                                                     📅 <?= date('d.m.Y', strtotime($event['event_date'])) ?>
                                                     <?= $event['event_time'] ? ' 🕒 ' . substr($event['event_time'], 0, 5) : '' ?>
-                                                    <?= $event['class_name'] ? ' | 👥 ' . $event['class_name'] : '' ?>
+                                                    <?= $event['class_name'] ? ' | 👥 ' . htmlspecialchars($event['class_name'], ENT_QUOTES, 'UTF-8') : '' ?>
                                                 </div>
                                                 <?php if ($event['description']): ?>
                                                     <div style="font-size: 0.9em; margin-top: 6px; color: #555;">
@@ -1094,8 +1048,8 @@ foreach ($events as $event) {
 
 <script>
     let currentDate = new Date();
-    const scheduleData = <?= json_encode($schedule) ?>;
-    const eventsData = <?= json_encode($events) ?>;
+    const scheduleData = <?= json_encode($schedule, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE) ?>;
+    const eventsData = <?= json_encode($events, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE) ?>;
 
     function renderCalendar() {
         const calendarGrid = document.getElementById('calendar-grid');
@@ -1243,6 +1197,12 @@ foreach ($events as $event) {
         return lessonTimes[lessonNumber] || '08:30';
     }
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch];
+        });
+    }
+
     function showEventDetails(event) {
         const modal = document.createElement('div');
         modal.className = 'modal';
@@ -1250,17 +1210,17 @@ foreach ($events as $event) {
 
         modal.innerHTML = `
                 <div class="modal-content">
-                    <h3 style="margin-bottom: 15px; color: #2c3e50;">${event.fullTitle}</h3>
+                    <h3 style="margin-bottom: 15px; color: #2c3e50;">${escapeHtml(event.fullTitle)}</h3>
                     <div style="display: grid; gap: 10px;">
-                        <div><strong>Тип:</strong> ${getEventTypeName(event.type)}</div>
-                        ${event.time ? `<div><strong>Время:</strong> ${event.time}</div>` : ''}
-                        ${event.room ? `<div><strong>Кабинет:</strong> ${event.room}</div>` : ''}
-                        ${event.class ? `<div><strong>Класс:</strong> ${event.class}</div>` : ''}
-                        ${event.description ? `<div><strong>Описание:</strong> ${event.description}</div>` : ''}
+                        <div><strong>Тип:</strong> ${escapeHtml(getEventTypeName(event.type))}</div>
+                        ${event.time ? `<div><strong>Время:</strong> ${escapeHtml(event.time)}</div>` : ''}
+                        ${event.room ? `<div><strong>Кабинет:</strong> ${escapeHtml(event.room)}</div>` : ''}
+                        ${event.class ? `<div><strong>Класс:</strong> ${escapeHtml(event.class)}</div>` : ''}
+                        ${event.description ? `<div><strong>Описание:</strong> ${escapeHtml(event.description)}</div>` : ''}
                     </div>
                     <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
-                        ${event.id && !event.id.startsWith('s_') ?
-            `<button onclick="deleteEvent(${event.id})" class="btn btn-danger">🗑️ Удалить</button>` : ''}
+                        ${event.id && !String(event.id).startsWith('s_') ?
+            `<button onclick="deleteEvent(${parseInt(event.id, 10)})" class="btn btn-danger">🗑️ Удалить</button>` : ''}
                         <button onclick="this.closest('.modal').remove()" class="btn btn-secondary">✕ Закрыть</button>
                     </div>
                 </div>
@@ -1304,7 +1264,23 @@ foreach ($events as $event) {
 
     function deleteEvent(eventId) {
         if (confirm('Вы уверены, что хотите удалить это событие?')) {
-            window.location.href = 'calendar.php?delete_event=' + eventId;
+            const form = document.createElement('form');
+            form.method = 'POST';
+            const values = {
+                csrf_token: <?= json_encode(csrf_token()) ?>,
+                action: 'delete_event',
+                id: eventId
+            };
+            Object.keys(values).forEach(name => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = name;
+                input.value = values[name];
+                form.appendChild(input);
+            });
+            document.body.appendChild(form);
+            form.querySelector('[name="id"]').value = eventId;
+            form.submit();
         }
     }
 

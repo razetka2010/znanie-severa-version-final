@@ -1,12 +1,14 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once __DIR__ . '/../includes/grades_helper.php';
 
 requireStudent();
 
 $pdo = getDatabaseConnection();
 $student_id = $_SESSION['user_id'];
+$school_id = $_SESSION['user_school_id'];
 $school_id = $_SESSION['user_school_id'];
 
 // Получаем информацию о ученике
@@ -14,9 +16,9 @@ $student_stmt = $pdo->prepare("
     SELECT u.*, c.name as class_name, c.grade_level 
     FROM users u 
     LEFT JOIN classes c ON u.class_id = c.id 
-    WHERE u.id = ?
+    WHERE u.id = ? AND u.school_id = ?
 ");
-$student_stmt->execute([$student_id]);
+$student_stmt->execute([$student_id, $school_id]);
 $student = $student_stmt->fetch();
 
 // Получаем все предметы ученика с детальной статистикой
@@ -42,48 +44,40 @@ try {
             GROUP_CONCAT(DISTINCT u.full_name) as teachers
         FROM subjects s 
         JOIN schedule sch ON s.id = sch.subject_id 
-        JOIN users u ON sch.teacher_id = u.id 
-        WHERE sch.class_id = ? 
+        JOIN users u ON sch.teacher_id = u.id AND u.school_id = sch.school_id
+        WHERE sch.class_id = ? AND sch.school_id = ? AND s.school_id = ? AND u.school_id = ?
         GROUP BY s.id
         ORDER BY s.name
     ");
-    $stmt->execute([$student['class_id']]);
+    $stmt->execute([$student['class_id'], $school_id, $school_id, $school_id]);
     $subjects_data = $stmt->fetchAll();
 
     // Для каждого предмета получаем статистику оценок
     foreach ($subjects_data as $subject) {
         $grades_stmt = $pdo->prepare("
-            SELECT 
-                grade_value,
-                COUNT(*) as count,
-                lesson_date,
-                COALESCE(gw.weight, 1) AS grade_weight
+            SELECT g.grade_value, g.grade_type_id, g.grade_weight_id, g.lesson_date,
+                   gt.default_weight_id, gt.name AS grade_type_name,
+                   gw.weight AS grade_weight_value, gw.name AS grade_weight_name,
+                   default_gw.weight AS default_weight_value,
+                   default_gw.is_active AS default_weight_active
             FROM grades g 
-            LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
+            JOIN users student ON student.id = g.student_id AND student.school_id = ?
+            LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.school_id = student.school_id
+            LEFT JOIN grade_types gt ON gt.id = g.grade_type_id AND gt.school_id = student.school_id
+            LEFT JOIN grade_weights default_gw ON default_gw.id = gt.default_weight_id AND default_gw.school_id = student.school_id
             WHERE g.student_id = ? AND g.subject_id = ?
             ORDER BY g.lesson_date DESC
         ");
-        $grades_stmt->execute([$student_id, $subject['id']]);
+        $grades_stmt->execute([$school_id, $student_id, $subject['id']]);
         $grades = $grades_stmt->fetchAll();
 
         // Рассчитываем статистику по предмету
-        $numeric_grades = array_filter($grades, function($grade) {
-            return is_numeric($grade['grade_value']);
-        });
+        $numeric_grades = array_values(array_filter($grades, function($grade) {
+            return isNumericGrade($grade['grade_value']);
+        }));
 
         $grades_count = count($numeric_grades);
-        $average_grade = 0;
-
-        if ($grades_count > 0) {
-            $weighted_sum = 0;
-            $weight_total = 0;
-            foreach ($numeric_grades as $numeric_grade) {
-                $weight = (float)($numeric_grade['grade_weight'] ?? 1);
-                $weighted_sum += (float)$numeric_grade['grade_value'] * $weight;
-                $weight_total += $weight;
-            }
-            $average_grade = $weight_total > 0 ? round($weighted_sum / $weight_total, 2) : 0;
-        }
+        $average_grade = calculateWeightedAverage($numeric_grades) ?? 0;
 
         // Распределение оценок
         $grade_distribution = [
@@ -95,7 +89,7 @@ try {
         ];
 
         foreach ($grades as $grade) {
-            if (is_numeric($grade['grade_value'])) {
+            if (isNumericGrade($grade['grade_value'])) {
                 $grade_value = $grade['grade_value'];
                 if (isset($grade_distribution[$grade_value])) {
                     $grade_distribution[$grade_value]++;
@@ -144,12 +138,12 @@ try {
     // Рассчитываем общую статистику
     $overall_stats['total_subjects'] = count($subjects);
 
-    $all_grades = [];
+    $subject_averages = [];
     foreach ($subjects as $subject) {
         $overall_stats['total_grades'] += $subject['grades_count'];
 
         if ($subject['grades_count'] > 0) {
-            $all_grades[] = $subject['average_grade'];
+            $subject_averages[] = $subject['average_grade'];
 
             switch ($subject['status']) {
                 case 'excellent': $overall_stats['excellent_subjects']++; break;
@@ -159,9 +153,7 @@ try {
         }
     }
 
-    if (!empty($all_grades)) {
-        $overall_stats['average_grade'] = round(array_sum($all_grades) / count($all_grades), 2);
-    }
+    $overall_stats['average_grade'] = calculateOverallAverage($subject_averages) ?? 0;
 
 } catch (PDOException $e) {
     error_log("Ошибка при получении данных о предметах: " . $e->getMessage());
@@ -867,33 +859,7 @@ $lesson_times = [
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель навигации -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Ученик</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?= htmlspecialchars($student['full_name']) ?></strong>
-                <span class="role-badge">Ученик</span>
-                <div class="user-details">
-                    <?= htmlspecialchars($student['class_name']) ?> класс
-                </div>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                <li class="nav-section">Учебный процесс</li>
-                <li><a href="grades.php" class="nav-link">📝 Мои оценки</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
-                <li><a href="subjects.php" class="nav-link active">📖 Предметы</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $studentActivePage = 'subjects'; require __DIR__ . '/../includes/student_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -905,11 +871,11 @@ $lesson_times = [
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <!-- Общая статистика -->
@@ -924,6 +890,7 @@ $lesson_times = [
                     <div class="stat-icon">📊</div>
                     <div class="stat-number"><?= $overall_stats['average_grade'] ?: 'н/д' ?></div>
                     <div class="stat-label">Средний балл</div>
+                    <small>Средний балл учитывает вес оценок: контрольные важнее домашних.</small>
                 </div>
 
                 <div class="stat-card excellent">
@@ -1021,7 +988,7 @@ $lesson_times = [
                                     <div class="grades-title">Последние оценки:</div>
                                     <div class="grades-list">
                                         <?php foreach ($subject['recent_grades'] as $grade):
-                                            $grade_class = is_numeric($grade['grade_value']) ? "grade-{$grade['grade_value']}" : 'grade-other';
+                                            $grade_class = isNumericGrade($grade['grade_value']) ? "grade-{$grade['grade_value']}" : 'grade-other';
                                             ?>
                                             <span class="grade-badge <?= $grade_class ?>" title="<?= date('d.m.Y', strtotime($grade['lesson_date'])) ?>">
                                                     <?= $grade['grade_value'] ?>

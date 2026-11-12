@@ -1,7 +1,8 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once __DIR__ . '/../includes/grades_helper.php';
 
 requireStudent();
 
@@ -14,9 +15,9 @@ $student_stmt = $pdo->prepare("
     SELECT u.*, c.name as class_name, c.grade_level 
     FROM users u 
     LEFT JOIN classes c ON u.class_id = c.id 
-    WHERE u.id = ?
+    WHERE u.id = ? AND u.school_id = ?
 ");
-$student_stmt->execute([$student_id]);
+$student_stmt->execute([$student_id, $school_id]);
 $student = $student_stmt->fetch();
 
 // Получаем статистику ученика
@@ -31,36 +32,51 @@ $stats = [
 try {
     // Средняя оценка
     $stmt = $pdo->prepare("
-        SELECT SUM(CAST(g.grade_value AS DECIMAL) * COALESCE(gw.weight, 1)) / NULLIF(SUM(COALESCE(gw.weight, 1)), 0) as avg_grade
+        SELECT g.grade_value, g.grade_type_id, g.grade_weight_id, g.subject_id,
+               gw.weight AS grade_weight_value, gt.default_weight_id,
+               default_gw.weight AS default_weight_value,
+               default_gw.is_active AS default_weight_active
         FROM grades g
-        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
-        WHERE g.student_id = ? AND g.grade_value REGEXP '^[0-9]+$'
+        JOIN users student ON student.id = g.student_id AND student.school_id = ?
+        JOIN subjects subject ON subject.id = g.subject_id AND subject.school_id = student.school_id
+        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.school_id = student.school_id
+        LEFT JOIN grade_types gt ON gt.id = g.grade_type_id AND gt.school_id = student.school_id
+        LEFT JOIN grade_weights default_gw ON default_gw.id = gt.default_weight_id AND default_gw.school_id = student.school_id
+        WHERE g.student_id = ?
     ");
-    $stmt->execute([$student_id]);
-    $stats['average_grade'] = round($stmt->fetch()['avg_grade'] ?? 0, 2);
+    $stmt->execute([$school_id, $student_id]);
+    $subject_grades_for_average = [];
+    foreach ($stmt->fetchAll() as $grade) {
+        $subject_grades_for_average[$grade['subject_id']][] = $grade;
+    }
+    $subject_averages = [];
+    foreach ($subject_grades_for_average as $subject_grades_for_subject) {
+        $subject_averages[] = calculateWeightedAverage($subject_grades_for_subject);
+    }
+    $stats['average_grade'] = calculateOverallAverage($subject_averages) ?? 0;
 
     // Общее количество оценок
-    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM grades WHERE student_id = ?");
-    $stmt->execute([$student_id]);
+    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM grades g JOIN users u ON u.id = g.student_id WHERE g.student_id = ? AND u.school_id = ?");
+    $stmt->execute([$student_id, $school_id]);
     $stats['total_grades'] = $stmt->fetch()['count'];
 
     // Отличные оценки (5)
-    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM grades WHERE student_id = ? AND grade_value = '5'");
-    $stmt->execute([$student_id]);
+    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM grades g JOIN users u ON u.id = g.student_id WHERE g.student_id = ? AND u.school_id = ? AND g.grade_value = '5'");
+    $stmt->execute([$student_id, $school_id]);
     $stats['excellent_grades'] = $stmt->fetch()['count'];
 
     // Хорошие оценки (4)
-    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM grades WHERE student_id = ? AND grade_value = '4'");
-    $stmt->execute([$student_id]);
+    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM grades g JOIN users u ON u.id = g.student_id WHERE g.student_id = ? AND u.school_id = ? AND g.grade_value = '4'");
+    $stmt->execute([$student_id, $school_id]);
     $stats['good_grades'] = $stmt->fetch()['count'];
 
     // Уроки на сегодня
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as count 
         FROM schedule s 
-        WHERE s.class_id = ? AND s.lesson_date = CURDATE()
+        WHERE s.class_id = ? AND s.school_id = ? AND s.lesson_date = CURDATE()
     ");
-    $stmt->execute([$student['class_id']]);
+    $stmt->execute([$student['class_id'], $school_id]);
     $stats['today_lessons'] = $stmt->fetch()['count'];
 
 } catch (PDOException $e) {
@@ -73,13 +89,14 @@ try {
     $stmt = $pdo->prepare("
         SELECT g.*, s.name as subject_name, u.full_name as teacher_name 
         FROM grades g 
-        JOIN subjects s ON g.subject_id = s.id 
-        JOIN users u ON g.teacher_id = u.id 
+        JOIN users student ON student.id = g.student_id AND student.school_id = ?
+        JOIN subjects s ON g.subject_id = s.id AND s.school_id = student.school_id
+        JOIN users u ON g.teacher_id = u.id AND u.school_id = student.school_id
         WHERE g.student_id = ? 
         ORDER BY g.created_at DESC 
         LIMIT 10
     ");
-    $stmt->execute([$student_id]);
+    $stmt->execute([$school_id, $student_id]);
     $recent_grades = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении последних оценок: " . $e->getMessage());
@@ -93,10 +110,10 @@ try {
         FROM schedule s 
         JOIN subjects sub ON s.subject_id = sub.id 
         JOIN users u ON s.teacher_id = u.id 
-        WHERE s.class_id = ? AND s.lesson_date = CURDATE() 
+        WHERE s.class_id = ? AND s.school_id = ? AND s.lesson_date = CURDATE() 
         ORDER BY s.lesson_number ASC
     ");
-    $stmt->execute([$student['class_id']]);
+    $stmt->execute([$student['class_id'], $school_id]);
     $today_schedule = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении расписания на сегодня: " . $e->getMessage());
@@ -663,33 +680,7 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель навигации -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Ученик</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?= htmlspecialchars($student['full_name']) ?></strong>
-                <span class="role-badge">Ученик</span>
-                <div class="user-details">
-                    <?= htmlspecialchars($student['class_name']) ?> класс
-                </div>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link active">📊 Главная</a></li>
-                <li class="nav-section">Учебный процесс</li>
-                <li><a href="grades.php" class="nav-link">📝 Мои оценки</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
-                <li><a href="subjects.php" class="nav-link">📖 Предметы</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $studentActivePage = 'dashboard'; require __DIR__ . '/../includes/student_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -701,11 +692,11 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <!-- Статистика -->
@@ -713,7 +704,10 @@ try {
                 <div class="stat-card primary">
                     <div class="stat-icon">📊</div>
                     <div class="stat-number"><?= $stats['average_grade'] ?: 'н/д' ?></div>
-                    <div class="stat-label">Средний балл</div>
+                    <div class="stat-label" title="Среднее по предметам с учетом веса каждой оценки">
+                        Средний балл
+                        <small style="display:block">Контрольные важнее домашних</small>
+                    </div>
                 </div>
 
                 <div class="stat-card success">
@@ -912,18 +906,42 @@ try {
                 $subject_grades = [];
                 try {
                     $stmt = $pdo->prepare("
-                            SELECT s.name as subject_name, 
-                                SUM(CAST(g.grade_value AS DECIMAL) * COALESCE(gw.weight, 1)) / NULLIF(SUM(COALESCE(gw.weight, 1)), 0) as avg_grade,
-                                   COUNT(g.id) as grade_count
-                            FROM grades g
-                            LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.is_active = 1
-                            JOIN subjects s ON g.subject_id = s.id 
-                            WHERE g.student_id = ? AND g.grade_value REGEXP '^[0-9]+$'
-                            GROUP BY s.id, s.name 
-                            ORDER BY avg_grade DESC
-                        ");
-                    $stmt->execute([$student_id]);
-                    $subject_grades = $stmt->fetchAll();
+                        SELECT g.grade_value, g.grade_type_id, g.grade_weight_id, g.subject_id,
+                               s.name AS subject_name, gw.weight AS grade_weight_value,
+                               gt.default_weight_id, default_gw.weight AS default_weight_value,
+                               default_gw.is_active AS default_weight_active
+                        FROM grades g
+                        JOIN users student ON student.id = g.student_id AND student.school_id = ?
+                        JOIN subjects s ON s.id = g.subject_id AND s.school_id = student.school_id
+                        LEFT JOIN grade_weights gw ON gw.id = g.grade_weight_id AND gw.school_id = student.school_id
+                        LEFT JOIN grade_types gt ON gt.id = g.grade_type_id AND gt.school_id = student.school_id
+                        LEFT JOIN grade_weights default_gw ON default_gw.id = gt.default_weight_id AND default_gw.school_id = student.school_id
+                        WHERE g.student_id = ?
+                        ORDER BY s.name
+                    ");
+                    $stmt->execute([$school_id, $student_id]);
+                    $grade_rows_by_subject = [];
+                    foreach ($stmt->fetchAll() as $grade_row) {
+                        $grade_rows_by_subject[$grade_row['subject_id']]['name'] = $grade_row['subject_name'];
+                        $grade_rows_by_subject[$grade_row['subject_id']]['grades'][] = $grade_row;
+                    }
+                    foreach ($grade_rows_by_subject as $grade_rows) {
+                        $numeric_rows = array_values(array_filter($grade_rows['grades'], static function ($grade_row) {
+                            return isNumericGrade($grade_row['grade_value']);
+                        }));
+                        if (!$numeric_rows) {
+                            continue;
+                        }
+                        $average = calculateWeightedAverage($numeric_rows);
+                        $subject_grades[] = [
+                            'subject_name' => $grade_rows['name'],
+                            'avg_grade' => $average,
+                            'grade_count' => count($numeric_rows)
+                        ];
+                    }
+                    usort($subject_grades, static function ($left, $right) {
+                        return ($right['avg_grade'] ?? 0) <=> ($left['avg_grade'] ?? 0);
+                    });
                 } catch (PDOException $e) {
                     error_log("Ошибка при получении оценок по предметам: " . $e->getMessage());
                 }
@@ -946,8 +964,8 @@ try {
                                     <div style="font-size: 1.2em; font-weight: bold; color: #2c3e50;">
                                         <?= round($subject['avg_grade'], 2) ?>
                                     </div>
-                                    <div style="font-size: 0.8em; color: #7f8c8d;">
-                                        средний балл
+                                    <div style="font-size: 0.8em; color: #7f8c8d;" title="Среднее по предметам с учётом веса оценок">
+                                        средний балл с учетом веса
                                     </div>
                                 </div>
                             </div>

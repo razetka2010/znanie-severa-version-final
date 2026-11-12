@@ -1,16 +1,18 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
-
-// Проверка авторизации
-if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'super_admin') {
-    header('Location: ../login.php');
-    exit;
-}
+require_once '../config/auth.php';
+requireSuperAdmin();
 
 $pdo = getDatabaseConnection();
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$school_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$school_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
+$schoolTypes = [
+    'obshcheobrazovatelnaya' => 'Общеобразовательная',
+    'gymnasium' => 'Гимназия',
+    'lyceum' => 'Лицей',
+    'internat' => 'Интернат',
+];
 
 // Обработка добавления школы
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -18,7 +20,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $full_name = isset($_POST['full_name']) ? trim($_POST['full_name']) : '';
         $short_name = isset($_POST['short_name']) ? trim($_POST['short_name']) : '';
         $inn = isset($_POST['inn']) ? trim($_POST['inn']) : '';
-        $type = isset($_POST['type']) ? $_POST['type'] : 'общеобразовательная';
+        $typeInput = $_POST['type'] ?? null;
+        $type = is_string($typeInput) && isset($schoolTypes[$typeInput])
+            ? $typeInput
+            : 'obshcheobrazovatelnaya';
         $status = 'active';
         $legal_address = isset($_POST['legal_address']) ? trim($_POST['legal_address']) : '';
         $physical_address = isset($_POST['physical_address']) ? trim($_POST['physical_address']) : '';
@@ -47,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: schools.php');
             exit;
         } catch (PDOException $e) {
-            $error = "Ошибка при добавлении школы: " . $e->getMessage();
+            $error = publicErrorMessage($e, basename(__FILE__));
         }
     }
     // Обработка редактирования школы
@@ -55,7 +60,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $full_name = isset($_POST['full_name']) ? trim($_POST['full_name']) : '';
         $short_name = isset($_POST['short_name']) ? trim($_POST['short_name']) : '';
         $inn = isset($_POST['inn']) ? trim($_POST['inn']) : '';
-        $type = isset($_POST['type']) ? $_POST['type'] : 'общеобразовательная';
+        $typeInput = $_POST['type'] ?? null;
+        $type = is_string($typeInput) && isset($schoolTypes[$typeInput])
+            ? $typeInput
+            : 'obshcheobrazovatelnaya';
         $status = isset($_POST['status']) ? $_POST['status'] : 'active';
         $legal_address = isset($_POST['legal_address']) ? trim($_POST['legal_address']) : '';
         $physical_address = isset($_POST['physical_address']) ? trim($_POST['physical_address']) : '';
@@ -83,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: schools.php');
             exit;
         } catch (PDOException $e) {
-            $error = "Ошибка при обновлении школы: " . $e->getMessage();
+            $error = publicErrorMessage($e, basename(__FILE__));
         }
     }
 }
@@ -107,7 +115,7 @@ if ($action === 'delete' && $school_id > 0) {
         header('Location: schools.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении школы: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: schools.php');
         exit;
     }
@@ -142,34 +150,7 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge"><?php echo htmlspecialchars($_SESSION['user_role']); ?></span>
-            </div>
-
-            <ul class="nav-menu">
-                <li><a href="super_dashboard.php" class="nav-link">📊 Обзор</a></li>
-                <li class="nav-section">Администрирование</li>
-                <li><a href="schools.php" class="nav-link active">🏫 Учебные заведения</a></li>
-                <li><a href="users.php" class="nav-link">👥 Пользователи</a></li>
-                <li><a href="roles.php" class="nav-link">🔐 Роли и права</a></li>
-                <li><a href="curriculum.php" class="nav-link">📚 Учебные планы</a></li>
-                <li><a href="academic_periods.php" class="nav-link">📅 Учебные периоды</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $adminActivePage = 'schools'; require __DIR__ . '/../includes/admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -188,15 +169,15 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -204,6 +185,9 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
                 <div class="form-container">
                     <h2><?php echo $action === 'add' ? 'Добавление учебного заведения' : 'Редактирование учебного заведения'; ?></h2>
                     <form method="POST" class="school-form">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$school_id; ?>">
                         <div class="form-section">
                             <h3>Основные данные</h3>
                             <div class="form-grid">
@@ -222,10 +206,9 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
                                 <div class="form-group">
                                     <label>Тип учреждения</label>
                                     <select name="type">
-                                        <option value="общеобразовательная" <?php echo ($school_data && $school_data['type'] == 'общеобразовательная') ? 'selected' : ''; ?>>Общеобразовательная</option>
-                                        <option value="гимназия" <?php echo ($school_data && $school_data['type'] == 'гимназия') ? 'selected' : ''; ?>>Гимназия</option>
-                                        <option value="лицей" <?php echo ($school_data && $school_data['type'] == 'лицей') ? 'selected' : ''; ?>>Лицей</option>
-                                        <option value="интернат" <?php echo ($school_data && $school_data['type'] == 'интернат') ? 'selected' : ''; ?>>Интернат</option>
+                                        <?php foreach ($schoolTypes as $typeCode => $typeLabel): ?>
+                                            <option value="<?php echo htmlspecialchars($typeCode, ENT_QUOTES, 'UTF-8'); ?>" <?php echo (($school_data['type'] ?? 'obshcheobrazovatelnaya') === $typeCode) ? 'selected' : ''; ?>><?php echo htmlspecialchars($typeLabel, ENT_QUOTES, 'UTF-8'); ?></option>
+                                        <?php endforeach; ?>
                                     </select>
                                 </div>
                                 <?php if ($action === 'edit'): ?>
@@ -323,7 +306,7 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
                         <h2><?php echo htmlspecialchars($school_data['full_name']); ?></h2>
                         <div class="view-actions">
                             <a href="schools.php?action=edit&id=<?php echo $school_data['id']; ?>" class="btn btn-primary">✏️ Редактировать</a>
-                            <button onclick="confirmDelete(<?php echo $school_data['id']; ?>)" class="btn btn-danger">🗑️ Удалить</button>
+                            <?php echo csrf_post_button('delete', (int)$school_data['id'], '🗑️ Удалить', 'btn btn-danger', 'Вы уверены, что хотите удалить эту школу?'); ?>
                         </div>
                     </div>
 
@@ -347,9 +330,10 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
                                 </div>
                                 <div class="info-item">
                                     <label>Тип:</label>
-                                    <span class="type-badge type-<?php echo $school_data['type']; ?>">
-                                            <?php echo htmlspecialchars($school_data['type']); ?>
-                                        </span>
+                                    <?php $typeCode = isset($schoolTypes[$school_data['type']]) ? $school_data['type'] : 'obshcheobrazovatelnaya'; ?>
+                                    <span class="type-badge type-<?php echo htmlspecialchars($typeCode, ENT_QUOTES, 'UTF-8'); ?>">
+                                        <?php echo htmlspecialchars($schoolTypes[$typeCode], ENT_QUOTES, 'UTF-8'); ?>
+                                    </span>
                                 </div>
                                 <div class="info-item">
                                     <label>Статус:</label>
@@ -514,9 +498,10 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
                                         </td>
                                         <td><?php echo htmlspecialchars($school['inn']); ?></td>
                                         <td>
-                                                <span class="type-badge type-<?php echo $school['type']; ?>">
-                                                    <?php echo htmlspecialchars($school['type']); ?>
-                                                </span>
+                                            <?php $typeCode = isset($schoolTypes[$school['type']]) ? $school['type'] : 'obshcheobrazovatelnaya'; ?>
+                                            <span class="type-badge type-<?php echo htmlspecialchars($typeCode, ENT_QUOTES, 'UTF-8'); ?>">
+                                                <?php echo htmlspecialchars($schoolTypes[$typeCode], ENT_QUOTES, 'UTF-8'); ?>
+                                            </span>
                                         </td>
                                         <td>
                                                 <span class="status-badge status-<?php echo $school['status']; ?>">
@@ -533,9 +518,7 @@ $schools = $pdo->query("SELECT * FROM schools ORDER BY created_at DESC")->fetchA
                                                 <button class="btn-action btn-view" title="Просмотреть" onclick="viewSchool(<?php echo $school['id']; ?>)">
                                                     👁️
                                                 </button>
-                                                <button class="btn-action btn-delete" title="Удалить" onclick="confirmDelete(<?php echo $school['id']; ?>)">
-                                                    🗑️
-                                                </button>
+                                                <?php echo csrf_post_button('delete', (int)$school['id'], '🗑️', 'btn-action btn-delete', 'Вы уверены, что хотите удалить эту школу?'); ?>
                                             </div>
                                         </td>
                                     </tr>

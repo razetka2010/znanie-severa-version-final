@@ -217,23 +217,15 @@ function viewRole(roleId) {
 }
 
 function confirmDelete(roleId) {
-    if (confirm('Вы уверены, что хотите удалить эту роль? Это действие нельзя отменить.')) {
-        deleteRole(roleId);
-    }
+    deleteRole(roleId);
 }
 
 function deleteRole(roleId) {
-    console.log('Удаление роли ID: ' + roleId);
-
-    // Показываем индикатор загрузки
-    const deleteBtn = document.querySelector('.btn-delete[onclick="confirmDelete(' + roleId + ')"]');
-    if (deleteBtn) {
-        deleteBtn.innerHTML = '⏳';
-        deleteBtn.disabled = true;
-    }
-
-    // Отправляем запрос на удаление
-    window.location.href = 'roles.php?action=delete&id=' + roleId;
+    const form = Array.from(document.querySelectorAll('.csrf-action-form')).find(candidate =>
+        candidate.querySelector('[name="action"]').value === 'delete'
+        && candidate.querySelector('[name="id"]').value === String(roleId)
+    );
+    if (form) form.requestSubmit();
 }
 
 // Быстрый выбор типовых наборов прав

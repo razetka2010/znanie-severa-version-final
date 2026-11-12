@@ -1,49 +1,30 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 require_once '../config/report_files.php';
+require_once __DIR__ . '/../includes/periods_helper.php';
 
 requireTeacher();
 
 $pdo = getDatabaseConnection();
 $teacher_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
-
-try {
-    ensureReportFilesSchema($pdo);
-} catch (PDOException $e) {
-    error_log('Ошибка подготовки таблицы report_files: ' . $e->getMessage());
-}
-
-// Создаем или обновляем таблицу report_files
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS report_files (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            filename VARCHAR(255) NOT NULL,
-            original_name VARCHAR(255) NOT NULL,
-            file_size INT NOT NULL,
-            file_type VARCHAR(100) NOT NULL,
-            description TEXT,
-            uploaded_by INT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (uploaded_by) REFERENCES users(id)
-        )
-    ");
-} catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы report_files: " . $e->getMessage());
+$periods = getSchoolPeriods($pdo, (int)$school_id);
+$current_period = getCurrentPeriod($pdo, (int)$school_id);
+$selected_period_id = isset($_GET['period_id']) ? (int)$_GET['period_id'] : (int)($current_period['id'] ?? 0);
+$selected_period = null;
+foreach ($periods as $period) {
+    if ((int)$period['id'] === $selected_period_id) {
+        $selected_period = $period;
+        break;
+    }
 }
 
 // Получаем информацию о учителе
 $teacher_stmt = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
 $teacher_stmt->execute([$teacher_id]);
 $teacher = $teacher_stmt->fetch();
-
-// Получаем информацию о школе
-$school_stmt = $pdo->prepare("SELECT full_name, short_name FROM schools WHERE id = ?");
-$school_stmt->execute([$school_id]);
-$school = $school_stmt->fetch();
 
 // Статистика для учителя
 $stats = [
@@ -55,24 +36,28 @@ $stats = [
 
 try {
     // Количество классов
+    $schedule_period_sql = $selected_period ? ' AND lesson_date BETWEEN ? AND ?' : '';
+    $student_period_sql = $selected_period ? ' AND s.lesson_date BETWEEN ? AND ?' : '';
+    $period_params = $selected_period ? [$selected_period['start_date'], $selected_period['end_date']] : [];
     $stmt = $pdo->prepare("
-        SELECT COUNT(DISTINCT class_id) as count 
-        FROM schedule 
-        WHERE teacher_id = ? AND school_id = ?
+        SELECT COUNT(DISTINCT class_id) as count
+        FROM schedule
+        WHERE teacher_id = ? AND school_id = ? $schedule_period_sql
     ");
-    $stmt->execute([$teacher_id, $school_id]);
+    $stmt->execute(array_merge([$teacher_id, $school_id], $period_params));
     $stats['total_classes'] = $stmt->fetch()['count'];
 
     // Количество учеников
     $stmt = $pdo->prepare("
         SELECT COUNT(DISTINCT u.id) as count
         FROM users u
-        JOIN schedule s ON u.class_id = s.class_id
+        JOIN schedule s ON u.class_id = s.class_id AND s.school_id = u.school_id
         WHERE s.teacher_id = ? AND s.school_id = ? 
+        AND u.school_id = ?
         AND u.role_id IN (SELECT id FROM roles WHERE name = 'student')
-        AND u.is_active = 1
+        AND u.is_active = 1 $student_period_sql
     ");
-    $stmt->execute([$teacher_id, $school_id]);
+    $stmt->execute(array_merge([$teacher_id, $school_id, $school_id], $period_params));
     $stats['total_students'] = $stmt->fetch()['count'];
 
     // Уроки на сегодня
@@ -85,137 +70,26 @@ try {
     $stats['today_lessons'] = $stmt->fetch()['count'];
 
     // Всего выставленных оценок
+    $grade_period_sql = $selected_period ? ' AND g.lesson_date BETWEEN ? AND ?' : '';
     $stmt = $pdo->prepare("
-        SELECT COUNT(*) as count 
-        FROM grades 
-        WHERE teacher_id = ? AND grade_value IS NOT NULL
+        SELECT COUNT(*) as count
+        FROM grades g
+        JOIN users u ON u.id = g.student_id AND u.school_id = ?
+        WHERE g.teacher_id = ? AND g.grade_value IS NOT NULL $grade_period_sql
     ");
-    $stmt->execute([$teacher_id]);
+    $grade_params = [$school_id, $teacher_id];
+    if ($selected_period) {
+        $grade_params[] = $selected_period['start_date'];
+        $grade_params[] = $selected_period['end_date'];
+    }
+    $stmt->execute($grade_params);
     $stats['total_grades'] = $stmt->fetch()['count'];
 
 } catch (PDOException $e) {
     error_log("Ошибка при получении статистики: " . $e->getMessage());
 }
 
-// Обработка загрузки файлов
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['report_file']) && $_FILES['report_file']['error'] !== UPLOAD_ERR_NO_FILE) {
-    $upload_dir = '../uploads/reports/';
-
-    // Создаем директорию если не существует
-    if (!file_exists($upload_dir)) {
-        mkdir($upload_dir, 0777, true);
-    }
-
-    $file = $_FILES['report_file'];
-    $description = isset($_POST['description']) ? trim($_POST['description']) : '';
-
-    // Проверяем ошибки загрузки
-    if ($file['error'] === UPLOAD_ERR_OK) {
-        $original_name = basename($file['name']);
-        $file_size = $file['size'];
-        $file_type = $file['type'];
-
-        // Проверяем размер файла (максимум 10MB)
-        $max_size = 10 * 1024 * 1024;
-        if ($file_size > $max_size) {
-            $_SESSION['error_message'] = "Файл слишком большой. Максимальный размер: 10MB";
-            header('Location: reports.php');
-            exit;
-        }
-
-        // Проверяем тип файла
-        $allowed_types = [
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/csv',
-            'text/plain',
-            'image/jpeg',
-            'image/png',
-            'image/gif'
-        ];
-
-        if (!in_array($file_type, $allowed_types)) {
-            $_SESSION['error_message'] = "Недопустимый тип файла. Разрешены: PDF, DOC, DOCX, XLS, XLSX, CSV, TXT, JPEG, PNG, GIF";
-            header('Location: reports.php');
-            exit;
-        }
-
-        // Генерируем уникальное имя файла
-        $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
-        $filename = uniqid() . '_' . time() . '.' . $file_extension;
-        $file_path = $upload_dir . $filename;
-
-        // Перемещаем файл
-        if (move_uploaded_file($file['tmp_name'], $file_path)) {
-            try {
-                $stmt = $pdo->prepare("INSERT INTO report_files (filename, original_name, file_size, file_type, description, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$filename, $original_name, $file_size, $file_type, $description, $_SESSION['user_id']]);
-
-                $_SESSION['success_message'] = "Файл '{$original_name}' успешно загружен!";
-            } catch (PDOException $e) {
-                $_SESSION['error_message'] = "Ошибка при сохранении информации о файле: " . $e->getMessage();
-                // Удаляем файл если не удалось сохранить в БД
-                if (file_exists($file_path)) {
-                    unlink($file_path);
-                }
-            }
-        } else {
-            $_SESSION['error_message'] = "Ошибка при загрузке файла на сервер";
-        }
-    } else {
-        $error_messages = [
-            UPLOAD_ERR_INI_SIZE => 'Файл превышает максимальный размер, разрешенный сервером',
-            UPLOAD_ERR_FORM_SIZE => 'Файл превышает максимальный размер, указанный в форме',
-            UPLOAD_ERR_PARTIAL => 'Файл был загружен только частично',
-            UPLOAD_ERR_NO_FILE => 'Файл не был загружен',
-            UPLOAD_ERR_NO_TMP_DIR => 'Отсутствует временная папка',
-            UPLOAD_ERR_CANT_WRITE => 'Не удалось записать файл на диск',
-            UPLOAD_ERR_EXTENSION => 'Расширение PHP остановило загрузку файла'
-        ];
-
-        $error_message = isset($error_messages[$file['error']]) ? $error_messages[$file['error']] : 'Неизвестная ошибка загрузки';
-        $_SESSION['error_message'] = "Ошибка загрузки файла: " . $error_message;
-    }
-
-    header('Location: reports.php');
-    exit;
-}
-
-// Обработка удаления файла (только свои файлы)
-if (isset($_GET['delete_file'])) {
-    $file_id = intval($_GET['delete_file']);
-
-    try {
-        // Проверяем, что файл принадлежит текущему пользователю
-        $stmt = $pdo->prepare("SELECT filename FROM report_files WHERE id = ? AND uploaded_by = ?");
-        $stmt->execute([$file_id, $_SESSION['user_id']]);
-        $file = $stmt->fetch();
-
-        if ($file) {
-            // Удаляем физический файл
-            $file_path = '../uploads/reports/' . $file['filename'];
-            if (file_exists($file_path)) {
-                unlink($file_path);
-            }
-
-            // Удаляем запись из БД
-            $delete_stmt = $pdo->prepare("DELETE FROM report_files WHERE id = ?");
-            $delete_stmt->execute([$file_id]);
-
-            $_SESSION['success_message'] = "Файл успешно удален!";
-        } else {
-            $_SESSION['error_message'] = "Файл не найден или у вас нет прав для его удаления";
-        }
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении файла: " . $e->getMessage();
-    }
-
-    header('Location: reports.php');
-    exit;
-}
+handleReportFileActions($pdo, (int)$_SESSION['user_id'], basename(__FILE__), true);
 
 // Получение списка прикрепленных файлов (только файлы текущего пользователя)
 $stmt = $pdo->prepare("
@@ -232,12 +106,16 @@ $files = $stmt->fetchAll();
 $my_classes = [];
 try {
     $stmt = $pdo->prepare("
-        SELECT DISTINCT c.id, c.name, c.grade_level 
-        FROM classes c 
-        WHERE c.school_id = ? AND c.is_active = 1
+        SELECT DISTINCT c.id, c.name, c.grade_level
+        FROM classes c
+        JOIN schedule sch ON sch.class_id = c.id AND sch.school_id = c.school_id
+        WHERE c.school_id = ? AND c.is_active = 1 AND sch.teacher_id = ?
+            " . ($selected_period ? "AND sch.lesson_date BETWEEN ? AND ?" : "") . "
         ORDER BY c.grade_level, c.name
     ");
-    $stmt->execute([$school_id]);
+    $stmt->execute($selected_period
+        ? [$school_id, $teacher_id, $selected_period['start_date'], $selected_period['end_date']]
+        : [$school_id, $teacher_id]);
     $my_classes = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении классов: " . $e->getMessage());
@@ -251,9 +129,12 @@ try {
         FROM subjects s 
         JOIN schedule sch ON s.id = sch.subject_id 
         WHERE sch.teacher_id = ? AND sch.school_id = ?
+            " . ($selected_period ? "AND sch.lesson_date BETWEEN ? AND ?" : "") . "
         ORDER BY s.name
     ");
-    $stmt->execute([$teacher_id, $school_id]);
+    $stmt->execute($selected_period
+        ? [$teacher_id, $school_id, $selected_period['start_date'], $selected_period['end_date']]
+        : [$teacher_id, $school_id]);
     $my_subjects = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении предметов: " . $e->getMessage());
@@ -265,7 +146,7 @@ try {
         <link rel="shortcut icon" href="../logo.png" />
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Отчеты - Учитель</title>
+        <title>Отчёты - Учитель</title>
         <style>
             * {
                 box-sizing: border-box;
@@ -679,55 +560,36 @@ try {
     </head>
     <body>
     <div class="dashboard-container">
-        <!-- Боковая панель навигации -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h1>Знание Севера</h1>
-                <p>Электронный дневник</p>
-                <?php if ($school): ?>
-                    <div style="margin-top: 10px; font-size: 0.8em; opacity: 0.8;">
-                        <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                    </div>
-                <?php endif; ?>
-            </div>
-            <nav class="sidebar-nav">
-                <div class="user-info">
-                    <strong><?= htmlspecialchars($teacher['full_name']) ?></strong>
-                    <span class="role-badge">Учитель</span>
-                </div>
-                <ul class="nav-menu">
-                    <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                    <li class="nav-section">Учебный процесс</li>
-                    <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
-                    <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
-                    <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
-                    <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
-                    <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
-                    <li><a href="reports.php" class="nav-link active">📈 Отчеты</a></li>
-                    <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
-                    <li class="nav-section">Общее</li>
-                    <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                    <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-                </ul>
-            </nav>
-        </aside>
+        <?php $teacherActivePage = 'reports'; require __DIR__ . '/../includes/teacher_sidebar.php'; ?>
 
         <main class="main-content">
             <header class="content-header">
                 <div class="header-title">
-                    <h1>Отчеты и документы</h1>
+                    <h1>Отчёты и документы</h1>
                     <p>Управление отчетами и учебными материалами</p>
                 </div>
             </header>
 
             <div class="content-body">
                 <?php if (isset($_SESSION['success_message'])): ?>
-                    <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                    <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
                 <?php endif; ?>
 
                 <?php if (isset($_SESSION['error_message'])): ?>
-                    <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                    <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
                 <?php endif; ?>
+
+                <form method="GET" class="section" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                    <label for="period_id">Учебный период:</label>
+                    <select id="period_id" name="period_id" onchange="this.form.submit()">
+                        <option value="">Все периоды</option>
+                        <?php foreach ($periods as $period): ?>
+                            <option value="<?= (int)$period['id'] ?>" <?= $selected_period_id === (int)$period['id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($period['name'], ENT_QUOTES, 'UTF-8') ?><?= $period['is_locked'] ? ' 🔒' : '' ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </form>
 
                 <!-- Статистика учителя -->
                 <div class="stats-grid">
@@ -792,6 +654,7 @@ try {
                     </div>
 
                     <form method="POST" enctype="multipart/form-data" class="upload-form">
+                        <?php echo csrf_field(); ?>
                         <div class="form-group">
                             <label for="report_file">Выберите файл</label>
                             <input type="file" name="report_file" id="report_file"
@@ -853,15 +716,15 @@ try {
                                     <td><?= date('d.m.Y H:i', strtotime($file['created_at'])) ?></td>
                                     <td>
                                         <div class="file-actions">
-                                            <a href="../uploads/reports/<?= htmlspecialchars($file['filename']) ?>"
-                                               download="<?= htmlspecialchars($file['original_name']) ?>"
+                                            <a href="../reports/download.php?id=<?= (int)$file['id'] ?>"
                                                class="btn-action btn-primary" title="Скачать">
                                                 📥 Скачать
                                             </a>
-                                            <button onclick="confirmDeleteFile(<?= $file['id'] ?>)"
-                                                    class="btn-action btn-danger" title="Удалить">
-                                                🗑️ Удалить
-                                            </button>
+                                            <form method="POST" class="inline-delete" onsubmit="return confirm('Вы уверены, что хотите удалить этот файл? Это действие нельзя отменить.');">
+                                                <?php echo csrf_field(); ?>
+                                                <input type="hidden" name="delete_file" value="<?= (int)$file['id'] ?>">
+                                                <button type="submit" class="btn-action btn-danger" title="Удалить">🗑️ Удалить</button>
+                                            </form>
                                         </div>
                                     </td>
                                 </tr>
@@ -905,12 +768,6 @@ try {
     </div>
 
     <script>
-        function confirmDeleteFile(fileId) {
-            if (confirm('Вы уверены, что хотите удалить этот файл? Это действие нельзя отменить.')) {
-                window.location.href = 'reports.php?delete_file=' + fileId;
-            }
-        }
-
         // Показываем имя выбранного файла
         document.getElementById('report_file').addEventListener('change', function(e) {
             const fileName = this.files[0] ? this.files[0].name : 'Файл не выбран';

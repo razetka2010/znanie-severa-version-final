@@ -35,11 +35,18 @@ body {
 
 /* Боковая панель */
 .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
     width: 280px;
+    height: 100vh;
+    overflow-y: hidden;
+    flex: 0 0 280px;
     background: var(--sidebar);
     color: white;
     padding: 0;
     box-shadow: 12px 0 30px rgba(15, 23, 42, 0.12);
+    z-index: 200;
 }
 
 .sidebar-header {
@@ -77,10 +84,6 @@ body {
     line-height: 1.5;
 }
 
-.sidebar-nav {
-    padding: 20px 0;
-}
-
 .user-info {
     padding: 0 20px 20px;
     border-bottom: 1px solid #4a6278;
@@ -99,6 +102,22 @@ body {
     border-radius: 12px;
     font-size: 11px;
     font-weight: 600;
+}
+
+.role-badge.super-admin {
+    background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+    color: #fff;
+    text-transform: none;
+}
+
+.sidebar .role-badge.school-admin {
+    background: linear-gradient(135deg, #4834d4, #686de0);
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
 }
 
 .nav-menu {
@@ -139,9 +158,47 @@ body {
     border-left-color: #3498db;
 }
 
+.logout-form {
+    display: block;
+    margin: 0;
+}
+
+.sidebar .logout-form > button.logout-button {
+    display: flex;
+    align-items: center;
+    width: calc(100% - 12px);
+    min-height: 46px;
+    margin-right: 12px;
+    padding: 12px 20px;
+    appearance: none;
+    -webkit-appearance: none;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 0 12px 12px 0;
+    background: transparent !important;
+    color: rgba(255,255,255,0.82);
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+.sidebar .logout-form > button.logout-button:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: white;
+    border-left-color: #3498db;
+}
+
+.sidebar .logout-form > button.logout-button:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.8);
+    outline-offset: -2px;
+}
+
 /* Основной контент */
 .main-content {
     flex: 1;
+    min-width: 0;
+    margin-left: 280px;
     padding: 0;
     background: #f5f6fa;
 }
@@ -769,6 +826,15 @@ textarea:focus {
         margin-right: 0;
         border-radius: 8px;
         padding: 10px 12px;
+        font-size: 13px;
+    }
+
+    .sidebar .logout-form > button.logout-button {
+        width: 100%;
+        margin-right: 0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        min-height: 44px;
         font-size: 13px;
     }
 

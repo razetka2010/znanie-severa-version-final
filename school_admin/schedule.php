@@ -1,27 +1,18 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
+require_once __DIR__ . '/../includes/periods_helper.php';
 
 requireSchoolAdmin();
 
 $pdo = getDatabaseConnection();
-$school_id = $_SESSION['user_school_id'];
+$context = getSchoolAdminContext($pdo);
+$school_id = (int)$context['school_id'];
+$school = $context['school'];
+$school_periods = getSchoolPeriods($pdo, (int)$school_id);
 
-// Создаем таблицу subjects если её нет
 try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS subjects (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            school_id INT NOT NULL,
-            name VARCHAR(100) NOT NULL,
-            short_name VARCHAR(20),
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (school_id) REFERENCES schools(id)
-        )
-    ");
-
     // Добавляем базовые предметы если их нет
     $check_subjects = $pdo->prepare("SELECT COUNT(*) as count FROM subjects WHERE school_id = ?");
     $check_subjects->execute([$school_id]);
@@ -55,50 +46,8 @@ try {
     error_log("Ошибка при создании таблицы subjects: " . $e->getMessage());
 }
 
-// Проверяем структуру расписания без удаления существующих данных.
-try {
-    // Проверяем существование таблицы
-    $table_exists = $pdo->query("SHOW TABLES LIKE 'schedule'")->fetch();
-
-    if ($table_exists) {
-        // Проверяем есть ли столбец lesson_date
-        $columns = $pdo->query("SHOW COLUMNS FROM schedule LIKE 'lesson_date'")->fetch();
-        if (!$columns) {
-            $pdo->exec("ALTER TABLE schedule ADD COLUMN lesson_date DATE NULL AFTER teacher_id");
-        }
-    }
-
-    // Создаем таблицу schedule с правильной структурой
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS schedule (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            school_id INT NOT NULL,
-            class_id INT NOT NULL,
-            subject_id INT NOT NULL,
-            teacher_id INT NOT NULL,
-            lesson_date DATE NOT NULL,
-            lesson_number INT,
-            room VARCHAR(20),
-            is_completed BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (school_id) REFERENCES schools(id),
-            FOREIGN KEY (class_id) REFERENCES classes(id),
-            FOREIGN KEY (subject_id) REFERENCES subjects(id),
-            FOREIGN KEY (teacher_id) REFERENCES users(id)
-        )
-    ");
-} catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы schedule: " . $e->getMessage());
-    $_SESSION['error_message'] = "Ошибка при настройке таблицы расписания: " . $e->getMessage();
-}
-
-// Получаем информацию о школе
-$school_stmt = $pdo->prepare("SELECT full_name, short_name FROM schools WHERE id = ?");
-$school_stmt->execute([$school_id]);
-$school = $school_stmt->fetch();
-
-$action = isset($_GET['action']) ? $_GET['action'] : 'view';
-$schedule_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$action = $_POST['action'] ?? $_GET['action'] ?? 'view';
+$schedule_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 function scheduleAssignmentIsValid(PDO $pdo, int $school_id, int $class_id, int $subject_id, int $teacher_id): bool
 {
@@ -123,6 +72,61 @@ function scheduleSlotExists(PDO $pdo, int $school_id, int $class_id, string $les
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     return (bool)$stmt->fetchColumn();
+}
+
+function scheduleWeeklyPlanWarnings(PDO $pdo, int $school_id, int $class_id, int $subject_id, array $lesson_dates): array
+{
+    $hours_stmt = $pdo->prepare('SELECT hours_per_week FROM class_subjects WHERE school_id = ? AND class_id = ? AND subject_id = ?');
+    $hours_stmt->execute([$school_id, $class_id, $subject_id]);
+    $planned_hours = $hours_stmt->fetchColumn();
+    if ($planned_hours === false) {
+        return [];
+    }
+
+    $weeks = [];
+    foreach ($lesson_dates as $lesson_date) {
+        $date = new DateTimeImmutable($lesson_date);
+        $week_start = $date->modify('monday this week')->format('Y-m-d');
+        $week_end = (new DateTimeImmutable($week_start))->modify('+6 days')->format('Y-m-d');
+        $weeks[$week_start] = $week_end;
+    }
+
+    $count_stmt = $pdo->prepare("
+        SELECT COUNT(*) FROM schedule
+        WHERE school_id = ? AND class_id = ? AND subject_id = ? AND lesson_date BETWEEN ? AND ?
+    ");
+    $warnings = [];
+    foreach ($weeks as $week_start => $week_end) {
+        $count_stmt->execute([$school_id, $class_id, $subject_id, $week_start, $week_end]);
+        $scheduled = (int)$count_stmt->fetchColumn();
+        if ($scheduled > (int)$planned_hours) {
+            $warnings[] = sprintf(
+                'Внимание: на неделе с %s запланировано %d уроков этого предмета при норме %d ч/нед.',
+                date('d.m.Y', strtotime($week_start)),
+                $scheduled,
+                (int)$planned_hours
+            );
+        }
+    }
+    return $warnings;
+}
+
+function scheduleDateRestriction(PDO $pdo, int $school_id, string $lesson_date): ?string
+{
+    $date = DateTime::createFromFormat('Y-m-d', $lesson_date);
+    if (!$date || $date->format('Y-m-d') !== $lesson_date) {
+        return 'Укажите корректную дату урока.';
+    }
+
+    $period = getPeriodForDate($pdo, $school_id, $lesson_date);
+    if (!$period) {
+        return 'Дата урока не входит ни в один активный учебный период.';
+    }
+    if ((int)$period['is_locked'] === 1) {
+        return 'Учебный период закрыт. Изменять расписание в нём нельзя.';
+    }
+
+    return null;
 }
 
 // Получаем классы
@@ -191,6 +195,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Выберите дату урока";
         }
 
+        if (!$errors && ($date_error = scheduleDateRestriction($pdo, (int)$school_id, $lesson_date)) !== null) {
+            $errors[] = $date_error;
+        }
+
         if (!$errors && !scheduleAssignmentIsValid($pdo, $school_id, $class_id, $subject_id, $teacher_id)) {
             $errors[] = "Класс, предмет и учитель должны относиться к этой школе и быть активными";
         }
@@ -209,13 +217,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $school_id, $class_id, $subject_id, $teacher_id,
                             $lesson_date, $lesson_number, $room
                     ]);
+                    $plan_warnings = scheduleWeeklyPlanWarnings($pdo, $school_id, $class_id, $subject_id, [$lesson_date]);
+                    if ($plan_warnings) {
+                        $_SESSION['warning_message'] = implode(' ', $plan_warnings);
+                    }
+                    logUserAction($pdo, 'schedule_lesson_created', json_encode([
+                        'school_id' => $school_id,
+                        'class_id' => $class_id,
+                        'subject_id' => $subject_id,
+                        'lesson_date' => $lesson_date
+                    ], JSON_UNESCAPED_UNICODE));
 
                     $_SESSION['success_message'] = "Урок успешно добавлен в расписание!";
                     header('Location: schedule.php');
                     exit;
                 }
             } catch (PDOException $e) {
-                $_SESSION['error_message'] = "Ошибка при добавлении урока: " . $e->getMessage();
+                $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $_SESSION['error_message'] = implode("<br>", $errors);
@@ -251,12 +269,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $month_num = date('m', strtotime($month . '-01'));
                 $days_in_month = cal_days_in_month(CAL_GREGORIAN, $month_num, $year);
                 $lessons_added = 0;
+                $added_dates = [];
 
                 for ($day = 1; $day <= $days_in_month; $day++) {
                     $date = sprintf("%d-%02d-%02d", $year, $month_num, $day);
                     $day_of_week = date('N', strtotime($date)); // 1-понедельник, 7-воскресенье
 
                     if (in_array($day_of_week, $days_of_week)) {
+                        $date_error = scheduleDateRestriction($pdo, (int)$school_id, $date);
+                        if ($date_error !== null) {
+                            throw new InvalidArgumentException($date_error);
+                        }
                         // Проверяем, нет ли уже урока в эту дату
                         if (!scheduleSlotExists($pdo, $school_id, $class_id, $date, $lesson_number)) {
                             $stmt = $pdo->prepare("
@@ -268,18 +291,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     $date, $lesson_number, $room
                             ]);
                             $lessons_added++;
+                            $added_dates[] = $date;
                         }
                     }
                 }
 
                 $pdo->commit();
+                $plan_warnings = scheduleWeeklyPlanWarnings($pdo, $school_id, $class_id, $subject_id, $added_dates);
+                if ($plan_warnings) {
+                    $_SESSION['warning_message'] = implode(' ', $plan_warnings);
+                }
+                logUserAction($pdo, 'schedule_month_created', json_encode([
+                    'school_id' => $school_id,
+                    'class_id' => $class_id,
+                    'subject_id' => $subject_id,
+                    'month' => $month,
+                    'lessons_added' => $lessons_added
+                ], JSON_UNESCAPED_UNICODE));
                 $_SESSION['success_message'] = "Расписание успешно добавлено! Добавлено $lessons_added уроков на месяц.";
                 header('Location: schedule.php');
                 exit;
 
             } catch (PDOException $e) {
-                $pdo->rollBack();
-                $_SESSION['error_message'] = "Ошибка при добавлении расписания: " . $e->getMessage();
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
+            } catch (InvalidArgumentException $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $_SESSION['error_message'] = $e->getMessage();
             }
         } else {
             $_SESSION['error_message'] = implode("<br>", $errors);
@@ -290,14 +332,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Обработка удаления урока
 if ($action === 'delete' && $schedule_id > 0) {
     try {
+        $date_stmt = $pdo->prepare('SELECT lesson_date FROM schedule WHERE id = ? AND school_id = ?');
+        $date_stmt->execute([$schedule_id, $school_id]);
+        $lesson_date = $date_stmt->fetchColumn();
+        if ($lesson_date === false) {
+            throw new InvalidArgumentException('Урок не найден в вашей школе.');
+        }
+        $date_error = scheduleDateRestriction($pdo, (int)$school_id, (string)$lesson_date);
+        if ($date_error !== null) {
+            throw new InvalidArgumentException($date_error);
+        }
         $stmt = $pdo->prepare("DELETE FROM schedule WHERE id = ? AND school_id = ?");
         $stmt->execute([$schedule_id, $school_id]);
+        logUserAction($pdo, 'schedule_lesson_deleted', json_encode([
+            'school_id' => $school_id,
+            'schedule_id' => $schedule_id,
+            'lesson_date' => $lesson_date
+        ], JSON_UNESCAPED_UNICODE));
 
         $_SESSION['success_message'] = "Урок успешно удален из расписания!";
         header('Location: schedule.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении урока: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
+        header('Location: schedule.php');
+        exit;
+    } catch (InvalidArgumentException $e) {
+        $_SESSION['error_message'] = $e->getMessage();
         header('Location: schedule.php');
         exit;
     }
@@ -306,16 +367,12 @@ if ($action === 'delete' && $schedule_id > 0) {
 // Получение расписания для просмотра
 $schedule = [];
 $filter_class_id = isset($_GET['filter_class_id']) ? intval($_GET['filter_class_id']) : 0;
-$filter_month = isset($_GET['filter_month']) ? $_GET['filter_month'] : date('Y-m');
+$filter_month = isset($_GET['filter_month']) && is_string($_GET['filter_month']) ? $_GET['filter_month'] : date('Y-m');
+if ($filter_month !== '' && !preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $filter_month)) {
+    $filter_month = date('Y-m');
+}
 
 try {
-    // Проверяем существование столбца lesson_date
-    $columns = $pdo->query("SHOW COLUMNS FROM schedule LIKE 'lesson_date'")->fetch();
-
-    if (!$columns) {
-        throw new Exception("Таблица schedule не имеет столбца lesson_date. Перезагрузите страницу для автоматического исправления.");
-    }
-
     $sql = "
         SELECT 
             s.*,
@@ -349,9 +406,9 @@ try {
     $schedule = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("Ошибка при получении расписания: " . $e->getMessage());
-    $_SESSION['error_message'] = "Ошибка при загрузке расписания: " . $e->getMessage();
+    $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
 } catch (Exception $e) {
-    $_SESSION['error_message'] = $e->getMessage();
+    $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
 }
 
 // Группировка расписания по датам для календаря
@@ -374,6 +431,14 @@ foreach ($schedule as $lesson) {
     <title>Расписание - Администратор школы</title>
     <link rel="stylesheet" href="../css/dashboard.css">
     <style>
+        .alert-warning {
+    padding: 10px 15px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+        }
         .schedule-container {
             margin-top: 20px;
         }
@@ -541,38 +606,7 @@ foreach ($schedule as $lesson) {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Администратор школы</p>
-            <?php if ($school): ?>
-                <div class="school-info">
-                    <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                </div>
-            <?php endif; ?>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge school-admin">Администратор школы</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li class="nav-section">Управление школой</li>
-                <li><a href="classes.php" class="nav-link">👨‍🏫 Классы</a></li>
-                <li><a href="teachers.php" class="nav-link">👥 Учителя</a></li>
-                <li><a href="students.php" class="nav-link">🎓 Ученики</a></li>
-                <li><a href="parents.php" class="nav-link">👨‍👩‍👧‍👦 Родители</a></li>
-                <li><a href="schedule.php" class="nav-link active">📅 Расписание</a></li>
-                <li><a href="grade_types.php" class="nav-link">📊 Типы оценок</a></li>
-                <li><a href="grade_weights.php" class="nav-link">⚖️ Веса оценок</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $schoolAdminActivePage = 'schedule'; require __DIR__ . '/../includes/school_admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -587,12 +621,22 @@ foreach ($schedule as $lesson) {
         </header>
 
         <div class="content-body">
+            <?php if (!$school_periods): ?>
+                <div class="alert alert-error">
+                    В школе нет активных учебных периодов. Создайте период перед добавлением расписания:
+                    <a href="academic_periods.php">Учебные периоды</a>.
+                </div>
+            <?php endif; ?>
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
+            <?php endif; ?>
+
+            <?php if (isset($_SESSION['warning_message'])): ?>
+                <div class="alert-warning"><?php echo consumeFlashMessage('warning_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <!-- Фильтры -->
@@ -787,12 +831,7 @@ foreach ($schedule as $lesson) {
                                                 <br><?= htmlspecialchars($lesson['teacher_name']) ?>
                                             </div>
                                             <div style="margin-top: 5px;">
-                                                <a href="schedule.php?action=delete&id=<?= $lesson['id'] ?>"
-                                                   class="btn btn-danger"
-                                                   style="padding: 2px 6px; font-size: 0.8em;"
-                                                   onclick="return confirm('Удалить урок из расписания?')">
-                                                    🗑️ Удалить
-                                                </a>
+                                                <?= csrf_post_button('delete', (int)$lesson['id'], '🗑️ Удалить', 'btn btn-danger', 'Удалить урок из расписания?') ?>
                                             </div>
                                         </div>
                                     <?php endforeach; ?>

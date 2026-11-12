@@ -1,20 +1,13 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
-require_once '../config/homework_completion.php';
 
 requireStudent();
 
 $pdo = getDatabaseConnection();
 $student_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
-
-try {
-    ensureHomeworkCompletionSchema($pdo);
-} catch (PDOException $e) {
-    error_log('Ошибка подготовки таблицы выполнения ДЗ: ' . $e->getMessage());
-}
 
 // Получаем информацию о ученике
 $student_stmt = $pdo->prepare("
@@ -28,8 +21,17 @@ $student = $student_stmt->fetch();
 
 // Получаем параметры фильтрации
 $filter_subject = isset($_GET['subject']) ? intval($_GET['subject']) : 0;
-$filter_status = isset($_GET['status']) ? $_GET['status'] : 'active';
-$filter_date = isset($_GET['date']) ? $_GET['date'] : '';
+$filter_status = isset($_GET['status']) && is_string($_GET['status']) ? $_GET['status'] : 'active';
+if (!in_array($filter_status, ['active', 'completed', 'overdue', ''], true)) {
+    $filter_status = 'active';
+}
+$filter_date = isset($_GET['date']) && is_string($_GET['date']) ? $_GET['date'] : '';
+if ($filter_date !== '') {
+    $filter_date_obj = DateTime::createFromFormat('Y-m-d', $filter_date);
+    if (!$filter_date_obj || $filter_date_obj->format('Y-m-d') !== $filter_date) {
+        $filter_date = '';
+    }
+}
 $show_completed = isset($_GET['show_completed']) ? true : false;
 
 // Получаем все предметы ученика
@@ -137,54 +139,67 @@ try {
 }
 
 // Обработка отметки выполнения
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    if ($_POST['action'] === 'mark_completed') {
-        $homework_id = intval($_POST['homework_id']);
-        $student_comment = trim($_POST['student_comment'] ?? '');
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])
+    && in_array($_POST['action'], ['mark_completed', 'mark_incomplete'], true)) {
+    $homeworkIdInput = $_POST['homework_id'] ?? null;
+    $homework_id = is_scalar($homeworkIdInput)
+        ? filter_var((string)$homeworkIdInput, FILTER_VALIDATE_INT)
+        : false;
 
-        try {
-            // Проверяем, существует ли уже запись
-            $check_stmt = $pdo->prepare("SELECT * FROM homework_completion WHERE homework_id = ? AND student_id = ?");
+    if ($homework_id === false || $homework_id < 1) {
+        $_SESSION['error_message'] = 'Домашнее задание не найдено или недоступно.';
+        header('Location: homework.php');
+        exit;
+    }
+
+    try {
+        $access_stmt = $pdo->prepare("
+            SELECT 1
+            FROM homework h
+            JOIN classes c ON c.id = h.class_id
+            WHERE h.id = ? AND h.class_id = ? AND c.school_id = ?
+            LIMIT 1
+        ");
+        $access_stmt->execute([
+            $homework_id,
+            (int)($student['class_id'] ?? 0),
+            (int)($student['school_id'] ?? 0)
+        ]);
+
+        if (!$access_stmt->fetchColumn()) {
+            $_SESSION['error_message'] = 'Домашнее задание не найдено или недоступно.';
+            header('Location: homework.php');
+            exit;
+        }
+
+        if ($_POST['action'] === 'mark_completed') {
+            $student_comment = isset($_POST['student_comment']) && is_string($_POST['student_comment'])
+                ? trim($_POST['student_comment'])
+                : '';
+            $check_stmt = $pdo->prepare("SELECT 1 FROM homework_completion WHERE homework_id = ? AND student_id = ?");
             $check_stmt->execute([$homework_id, $student_id]);
-            $existing = $check_stmt->fetch();
 
-            if ($existing) {
-                // Обновляем существующую запись
+            if ($check_stmt->fetchColumn()) {
                 $stmt = $pdo->prepare("UPDATE homework_completion SET status = 'done', submitted_at = NOW(), student_comment = ? WHERE homework_id = ? AND student_id = ?");
                 $stmt->execute([$student_comment, $homework_id, $student_id]);
             } else {
-                // Создаем новую запись
                 $stmt = $pdo->prepare("INSERT INTO homework_completion (homework_id, student_id, status, submitted_at, student_comment) VALUES (?, ?, 'done', NOW(), ?)");
                 $stmt->execute([$homework_id, $student_id, $student_comment]);
             }
 
-            $_SESSION['success_message'] = "Домашнее задание отмечено как выполненное!";
-            header('Location: homework.php');
-            exit;
-
-        } catch (PDOException $e) {
-            $_SESSION['error_message'] = "Ошибка при сохранении: " . $e->getMessage();
-            header('Location: homework.php');
-            exit;
-        }
-    }
-
-    if ($_POST['action'] === 'mark_incomplete') {
-        $homework_id = intval($_POST['homework_id']);
-
-        try {
+            $_SESSION['success_message'] = 'Домашнее задание отмечено как выполненное!';
+        } else {
             $stmt = $pdo->prepare("DELETE FROM homework_completion WHERE homework_id = ? AND student_id = ?");
             $stmt->execute([$homework_id, $student_id]);
-
-            $_SESSION['success_message'] = "Домашнее задание возвращено в активные!";
-            header('Location: homework.php');
-            exit;
-
-        } catch (PDOException $e) {
-            $_SESSION['error_message'] = "Ошибка при сохранении: " . $e->getMessage();
-            header('Location: homework.php');
-            exit;
+            $_SESSION['success_message'] = 'Домашнее задание возвращено в активные!';
         }
+
+        header('Location: homework.php');
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
+        header('Location: homework.php');
+        exit;
     }
 }
 
@@ -849,33 +864,7 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель навигации -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Электронный дневник</h1>
-            <p>Ученик</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?= htmlspecialchars($student['full_name']) ?></strong>
-                <span class="role-badge">Ученик</span>
-                <div class="user-details">
-                    <?= htmlspecialchars($student['class_name']) ?> класс
-                </div>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                <li class="nav-section">Учебный процесс</li>
-                <li><a href="grades.php" class="nav-link">📝 Мои оценки</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="homework.php" class="nav-link active">📚 Домашние задания</a></li>
-                <li><a href="subjects.php" class="nav-link">📖 Предметы</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $studentActivePage = 'homework'; require __DIR__ . '/../includes/student_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -887,11 +876,11 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <!-- Статистика -->
@@ -1089,6 +1078,7 @@ try {
                                         </button>
                                     <?php else: ?>
                                         <form method="POST" style="display: inline;">
+                                            <?php echo csrf_field(); ?>
                                             <input type="hidden" name="action" value="mark_incomplete">
                                             <input type="hidden" name="homework_id" value="<?= $hw['id'] ?>">
                                             <button type="submit" class="btn btn-outline">
@@ -1138,6 +1128,7 @@ try {
         </div>
 
         <form method="POST" id="completionForm">
+            <?php echo csrf_field(); ?>
             <input type="hidden" name="action" value="mark_completed">
             <input type="hidden" name="homework_id" id="modalHomeworkId">
 
@@ -1198,7 +1189,7 @@ try {
     // Плавная прокрутка к новому заданию после выполнения
     <?php if (isset($_GET['highlight'])): ?>
     document.addEventListener('DOMContentLoaded', function() {
-        const element = document.getElementById('homework-<?= $_GET['highlight'] ?>');
+        const element = document.getElementById('homework-' + <?= json_encode((string)($_GET['highlight'] ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>);
         if (element) {
             element.scrollIntoView({ behavior: 'smooth', block: 'center' });
             element.style.animation = 'pulse 2s infinite';

@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -20,9 +20,19 @@ $student_stmt->execute([$student_id]);
 $student = $student_stmt->fetch();
 
 // Получаем параметры фильтрации
-$selected_date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
-$selected_week = isset($_GET['week']) ? $_GET['week'] : date('Y-W');
-$view_type = isset($_GET['view']) ? $_GET['view'] : 'day';
+$selected_date = isset($_GET['date']) && is_string($_GET['date']) ? $_GET['date'] : date('Y-m-d');
+$selected_date_obj = DateTime::createFromFormat('Y-m-d', $selected_date);
+if (!$selected_date_obj || $selected_date_obj->format('Y-m-d') !== $selected_date) {
+    $selected_date = date('Y-m-d');
+}
+$selected_week = isset($_GET['week']) && is_string($_GET['week']) ? $_GET['week'] : date('Y-W');
+if (!preg_match('/^\d{4}-\d{1,2}$/', $selected_week)) {
+    $selected_week = date('Y-W');
+}
+$view_type = isset($_GET['view']) && is_string($_GET['view']) ? $_GET['view'] : 'day';
+if (!in_array($view_type, ['day', 'week'], true)) {
+    $view_type = 'day';
+}
 
 // Время уроков (стандартное расписание)
 $lesson_times = [
@@ -810,33 +820,7 @@ function getSubstitutionByNumber($substitutions, $lesson_date, $lesson_number) {
     </head>
     <body>
     <div class="dashboard-container">
-        <!-- Боковая панель навигации -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h1>Электронный дневник</h1>
-                <p>Ученик</p>
-            </div>
-            <nav class="sidebar-nav">
-                <div class="user-info">
-                    <strong><?= htmlspecialchars($student['full_name']) ?></strong>
-                    <span class="role-badge">Ученик</span>
-                    <div class="user-details">
-                        <?= htmlspecialchars($student['class_name']) ?> класс
-                    </div>
-                </div>
-                <ul class="nav-menu">
-                    <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                    <li class="nav-section">Учебный процесс</li>
-                    <li><a href="grades.php" class="nav-link">📝 Мои оценки</a></li>
-                    <li><a href="schedule.php" class="nav-link active">📅 Расписание</a></li>
-                    <li><a href="homework.php" class="nav-link">📚 Домашние задания</a></li>
-                    <li><a href="subjects.php" class="nav-link">📖 Предметы</a></li>
-                    <li class="nav-section">Общее</li>
-                    <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                    <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-                </ul>
-            </nav>
-        </aside>
+        <?php $studentActivePage = 'schedule'; require __DIR__ . '/../includes/student_sidebar.php'; ?>
 
         <main class="main-content">
             <header class="content-header">
@@ -848,11 +832,11 @@ function getSubstitutionByNumber($substitutions, $lesson_date, $lesson_number) {
 
             <div class="content-body">
                 <?php if (isset($_SESSION['success_message'])): ?>
-                    <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                    <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
                 <?php endif; ?>
 
                 <?php if (isset($_SESSION['error_message'])): ?>
-                    <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                    <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
                 <?php endif; ?>
 
                 <!-- Фильтры и навигация -->

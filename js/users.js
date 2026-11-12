@@ -125,45 +125,16 @@ function viewUser(userId) {
     window.location.href = 'users.php?action=view&id=' + userId;
 }
 
-function confirmResetPassword(userId) {
-    if (confirm('Вы уверены, что хотите сбросить пароль пользователя? Новый пароль будет: password123')) {
-        resetPassword(userId);
-    }
-}
-
-function resetPassword(userId) {
-    console.log('Сброс пароля пользователя ID: ' + userId);
-
-    // Показываем индикатор загрузки
-    const resetBtn = document.querySelector('.btn-reset[onclick="confirmResetPassword(' + userId + ')"]');
-    if (resetBtn) {
-        const originalHtml = resetBtn.innerHTML;
-        resetBtn.innerHTML = '⏳';
-        resetBtn.disabled = true;
-    }
-
-    // Отправляем запрос на сброс пароля
-    window.location.href = 'users.php?action=reset_password&id=' + userId;
-}
-
 function confirmDelete(userId) {
-    if (confirm('Вы уверены, что хотите удалить этого пользователя? Это действие нельзя отменить.')) {
-        deleteUser(userId);
-    }
+    deleteUser(userId);
 }
 
 function deleteUser(userId) {
-    console.log('Удаление пользователя ID: ' + userId);
-
-    // Показываем индикатор загрузки
-    const deleteBtn = document.querySelector('.btn-delete[onclick="confirmDelete(' + userId + ')"]');
-    if (deleteBtn) {
-        deleteBtn.innerHTML = '⏳';
-        deleteBtn.disabled = true;
-    }
-
-    // Отправляем запрос на удаление
-    window.location.href = 'users.php?action=delete&id=' + userId;
+    const form = Array.from(document.querySelectorAll('.csrf-action-form')).find(candidate =>
+        candidate.querySelector('[name="action"]').value === 'delete'
+        && candidate.querySelector('[name="id"]').value === String(userId)
+    );
+    if (form) form.requestSubmit();
 }
 
 // Поиск пользователей

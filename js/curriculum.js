@@ -65,13 +65,6 @@ class CurriculumManager {
             });
         });
 
-        // Удаление
-        document.querySelectorAll('.btn-delete').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const curriculumId = e.target.closest('tr').dataset.id;
-                this.confirmDelete(curriculumId);
-            });
-        });
     }
 
     loadInitialData() {
@@ -179,12 +172,15 @@ class CurriculumManager {
         }
 
         // Отправляем запрос на удаление
-        const formData = new FormData();
-        formData.append('action', 'delete');
-        formData.append('id', id);
+        const actionForm = Array.from(document.querySelectorAll('.csrf-action-form')).find(form =>
+            form.querySelector('[name="action"]').value === 'delete'
+            && form.querySelector('[name="id"]').value === String(id)
+        );
+        if (!actionForm) return;
 
-        fetch(`curriculum.php?action=delete&id=${id}`, {
-            method: 'GET' // Используем GET вместо POST для простоты
+        fetch(actionForm.action, {
+            method: 'POST',
+            body: new FormData(actionForm)
         })
             .then(response => {
                 if (response.redirected) {

@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -7,8 +7,8 @@ require_once '../config/auth.php';
 requireSuperAdmin();
 
 $pdo = getDatabaseConnection();
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$user_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$user_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 function getPostedSchoolId(): ?int
 {
@@ -29,6 +29,15 @@ function validateSchoolId(PDO $pdo, ?int $school_id): ?string
     $stmt->execute([$school_id]);
 
     return $stmt->fetchColumn() === false ? 'Выбранная школа не существует. Обновите список школ и повторите попытку.' : null;
+}
+
+function validateRussianPhone(string $phone): ?string
+{
+    if ($phone !== '' && !preg_match('/^\+7[0-9]{10}$/D', $phone)) {
+        return 'Введите номер в формате +7 и 10 цифр, например +79991234567.';
+    }
+
+    return null;
 }
 
 // Обработка добавления пользователя
@@ -68,6 +77,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Некорректный формат email";
         }
 
+        $phone_error = validateRussianPhone($phone);
+        if ($phone_error !== null) {
+            $errors[] = $phone_error;
+        }
+
         $school_error = validateSchoolId($pdo, $school_id);
         if ($school_error !== null) {
             $errors[] = $school_error;
@@ -100,11 +114,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $pdo->prepare("INSERT INTO users (login, password_hash, full_name, email, phone, position, role_id, school_id, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $stmt->execute([$login, $password_hash, $full_name, $email, $phone, $position, $role_id, $school_id, $is_active]);
 
-                $_SESSION['success_message'] = "Пользователь успешно создан! Логин: " . htmlspecialchars($login);
+                $_SESSION['success_message'] = "Пользователь успешно создан! Логин: " . $login;
                 header('Location: users.php');
                 exit;
             } catch (PDOException $e) {
-                $error = "Ошибка при создании пользователя: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             } catch (Exception $e) {
                 $error = $e->getMessage();
             }
@@ -139,6 +153,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Email обязателен для заполнения";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Некорректный формат email";
+        }
+
+        $phone_error = validateRussianPhone($phone);
+        if ($phone_error !== null) {
+            $errors[] = $phone_error;
         }
 
         $school_error = validateSchoolId($pdo, $school_id);
@@ -185,7 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: users.php');
                 exit;
             } catch (PDOException $e) {
-                $error = "Ошибка при обновлении пользователя: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             } catch (Exception $e) {
                 $error = $e->getMessage();
             }
@@ -251,7 +270,7 @@ if ($action === 'delete' && $user_id > 0) {
         header('Location: users.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении пользователя: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: users.php');
         exit;
     }
@@ -325,44 +344,40 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
             margin: 5px 0;
         }
 
-        .soft-delete-info {
-            background: #d1ecf1;
-            border: 1px solid #bee5eb;
-            border-radius: 8px;
-            padding: 15px;
-            margin: 15px 0;
-            font-size: 0.9em;
+        .users-info-toast {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            width: min(440px, calc(100vw - 40px));
+            box-sizing: border-box;
+            line-height: 1.5;
+        }
+
+        .users-info-toast strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .users-info-toast-close {
+            flex: 0 0 auto;
+            border: 0;
+            padding: 0;
+            background: transparent;
+            color: inherit;
+            font-size: 22px;
+            line-height: 1;
+            cursor: pointer;
+            opacity: 0.85;
+        }
+
+        .users-info-toast-close:hover {
+            opacity: 1;
         }
     </style>
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge super-admin">Главный администратор</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="super_dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li class="nav-section">Системное управление</li>
-                <li><a href="schools.php" class="nav-link">🏫 Учебные заведения</a></li>
-                <li><a href="users.php" class="nav-link active">👥 Пользователи системы</a></li>
-                <li><a href="roles.php" class="nav-link">🔐 Роли и права</a></li>
-                <li><a href="curriculum.php" class="nav-link">📚 Учебные планы</a></li>
-                <li><a href="academic_periods.php" class="nav-link">📅 Учебные периоды</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Системные отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $adminActivePage = 'users'; require __DIR__ . '/../includes/admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -377,15 +392,15 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -394,6 +409,8 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                     <h2><?php echo $action === 'add' ? 'Добавить пользователя' : 'Редактировать пользователя'; ?></h2>
                     <form method="POST">
                         <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$user_id; ?>">
                         <div class="form-grid">
                             <div class="form-group">
                                 <label for="login">Логин *</label>
@@ -423,8 +440,11 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                             </div>
                             <div class="form-group">
                                 <label for="phone">Телефон</label>
-                                <input type="tel" id="phone" name="phone"
+                                <input type="tel" id="phone" name="phone" inputmode="tel" autocomplete="tel"
+                                       maxlength="12" pattern="\+7[0-9]{10}" placeholder="+79991234567"
+                                       title="Введите +7 и 10 цифр, например +79991234567"
                                        value="<?php echo isset($_POST['phone']) ? htmlspecialchars($_POST['phone']) : (isset($user_data['phone']) ? htmlspecialchars($user_data['phone']) : ''); ?>">
+                                <small class="form-hint">Формат: +7 и 10 цифр. Поле можно оставить пустым.</small>
                             </div>
                             <div class="form-group">
                                 <label for="position">Должность</label>
@@ -500,8 +520,8 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                         </div>
                         <div class="info-item">
                             <label>Роль:</label>
-                            <span class="role-badge <?php echo $user_data['role_name']; ?>">
-                                <?php echo htmlspecialchars($user_data['role_name']); ?>
+                            <span class="role-badge <?php echo htmlspecialchars(str_replace('_', '-', $user_data['role_name']), ENT_QUOTES, 'UTF-8'); ?>">
+                                <?php echo htmlspecialchars(getRoleDisplayName((string)$user_data['role_name'])); ?>
                             </span>
                         </div>
                         <div class="info-item">
@@ -530,6 +550,14 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                 </div>
             <?php else: ?>
                 <!-- Список пользователей -->
+                <div class="admin-notification info users-info-toast" role="status" aria-live="polite">
+                    <div>
+                        <strong>💡 Информация</strong>
+                        При удалении пользователей со связанными данными (расписание, оценки и т. д.)
+                        используется мягкое удаление: пользователь деактивируется, а его логин и email изменяются.
+                    </div>
+                    <button class="users-info-toast-close" type="button" aria-label="Закрыть уведомление">&times;</button>
+                </div>
                 <div class="admin-table-container">
                     <h2>Все пользователи системы</h2>
 
@@ -538,11 +566,6 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                             <label for="userSearch">Поиск пользователя</label>
                             <input type="search" id="userSearch" placeholder="ФИО, логин, email или школа..." autocomplete="off">
                         </div>
-                    </div>
-
-                    <div class="soft-delete-info">
-                        <strong>💡 Информация:</strong> При удалении пользователей с связанными данными (расписание, оценки и т.д.)
-                        используется "мягкое удаление" - пользователь деактивируется, а его логин и email изменяются.
                     </div>
 
                     <?php if (empty($users)): ?>
@@ -576,8 +599,8 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                                     <td><?php echo htmlspecialchars($user['login']); ?></td>
                                     <td><?php echo htmlspecialchars($user['email']); ?></td>
                                     <td>
-                                        <span class="role-badge <?php echo $user['role_name']; ?>">
-                                            <?php echo htmlspecialchars($user['role_name']); ?>
+                                        <span class="role-badge <?php echo htmlspecialchars(str_replace('_', '-', $user['role_name']), ENT_QUOTES, 'UTF-8'); ?>">
+                                            <?php echo htmlspecialchars(getRoleDisplayName((string)$user['role_name'])); ?>
                                         </span>
                                     </td>
                                     <td><?php echo htmlspecialchars($user['school_name'] ?: '—'); ?></td>
@@ -592,7 +615,7 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                                             <a href="users.php?action=view&id=<?php echo $user['id']; ?>" class="btn-action btn-view" title="Просмотр">👁️</a>
                                             <a href="users.php?action=edit&id=<?php echo $user['id']; ?>" class="btn-action btn-edit" title="Редактировать">✏️</a>
                                             <?php if ($user['id'] != $_SESSION['user_id']): ?>
-                                                <a href="users.php?action=delete&id=<?php echo $user['id']; ?>" class="btn-action btn-delete" title="Удалить" onclick="return confirmDelete(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['full_name']); ?>')">🗑️</a>
+                                                <?php echo csrf_post_button('delete', (int)$user['id'], '🗑️', 'btn-action btn-delete', 'Вы уверены, что хотите удалить этого пользователя?'); ?>
                                             <?php else: ?>
                                                 <span class="btn-action btn-disabled" title="Нельзя удалить себя">🚫</span>
                                             <?php endif; ?>
@@ -619,6 +642,22 @@ $current_school_id = isset($_SESSION['school_id']) ? $_SESSION['school_id'] : nu
                 alert.style.transition = 'opacity 0.5s ease';
                 setTimeout(() => alert.remove(), 500);
             }, 5000);
+        });
+
+        document.querySelectorAll('.users-info-toast').forEach(toast => {
+            const dismissToast = () => {
+                if (!toast.isConnected) {
+                    return;
+                }
+
+                toast.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(20px)';
+                setTimeout(() => toast.remove(), 300);
+            };
+
+            toast.querySelector('.users-info-toast-close').addEventListener('click', dismissToast);
+            setTimeout(dismissToast, 7000);
         });
 
         const userSearch = document.getElementById('userSearch');

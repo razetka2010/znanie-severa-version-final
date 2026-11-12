@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -8,21 +8,46 @@ requireSchoolAdmin();
 
 $pdo = getDatabaseConnection();
 
-// Получаем school_id из сессии с проверкой
-$school_id = $_SESSION['user_school_id'] ?? null;
-if (!$school_id) {
-    $_SESSION['error_message'] = "Школа не определена. Обратитесь к администратору.";
-    header('Location: dashboard.php');
-    exit;
+$schoolContext = getSchoolAdminContext($pdo);
+$school_id = $schoolContext['school_id'];
+$school = $schoolContext['school'];
+
+function validateParentStudentIds(PDO $pdo, $submittedIds, int $schoolId): array|false
+{
+    if (!is_array($submittedIds)) {
+        return false;
+    }
+
+    $studentIds = [];
+    foreach ($submittedIds as $submittedId) {
+        $studentId = filter_var($submittedId, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1]
+        ]);
+        if ($studentId === false) {
+            return false;
+        }
+        $studentIds[] = $studentId;
+    }
+
+    $studentIds = array_values(array_unique($studentIds));
+    if (!$studentIds) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($studentIds), '?'));
+    $stmt = $pdo->prepare("
+        SELECT COUNT(DISTINCT u.id)
+        FROM users u
+        JOIN roles r ON r.id = u.role_id
+        WHERE u.school_id = ? AND u.is_active = TRUE AND r.name = 'student' AND u.id IN ($placeholders)
+    ");
+    $stmt->execute(array_merge([$schoolId], $studentIds));
+
+    return (int)$stmt->fetchColumn() === count($studentIds) ? $studentIds : false;
 }
 
-// Получаем информацию о школе
-$school_stmt = $pdo->prepare("SELECT full_name, short_name FROM schools WHERE id = ?");
-$school_stmt->execute([$school_id]);
-$school = $school_stmt->fetch();
-
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$parent_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$parent_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 // Получаем ID роли родителя
 $parent_role_id = null;
@@ -46,37 +71,6 @@ try {
     error_log("Ошибка при получении роли ученика: " . $e->getMessage());
 }
 
-// Создаем единую каноническую таблицу для связи родителей и учеников
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS student_parent_links (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            parent_id INT NOT NULL,
-            student_id INT NOT NULL,
-            relationship VARCHAR(50) DEFAULT 'родитель',
-            is_primary TINYINT(1) NOT NULL DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (parent_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE KEY unique_parent_student (parent_id, student_id)
-        )
-    ");
-
-    // Миграция данных из legacy-таблиц, если они ещё существуют.
-    foreach (['student_parents', 'parent_students'] as $legacyTable) {
-        $legacyTableExists = $pdo->query("SHOW TABLES LIKE '$legacyTable'")->fetch();
-        if ($legacyTableExists) {
-            $pdo->exec("
-                INSERT IGNORE INTO student_parent_links (parent_id, student_id, relationship, is_primary, created_at)
-                SELECT parent_id, student_id, relationship, COALESCE(is_primary, 0), created_at
-                FROM $legacyTable
-            ");
-        }
-    }
-} catch (PDOException $e) {
-    error_log("Ошибка при создании/миграции таблицы student_parent_links: " . $e->getMessage());
-}
-
 // Обработка добавления родителя
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add') {
@@ -86,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $phone = !empty($_POST['phone']) ? trim($_POST['phone']) : null;
         $password = $_POST['password'];
         $password_confirm = $_POST['password_confirm'];
-        $student_ids = isset($_POST['student_ids']) ? $_POST['student_ids'] : [];
+        $student_ids = validateParentStudentIds($pdo, $_POST['student_ids'] ?? [], (int)$school_id);
 
         // Валидация
         $errors = [];
@@ -111,6 +105,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($password !== $password_confirm) {
             $errors[] = "Пароли не совпадают";
+        }
+
+        if ($student_ids === false) {
+            $errors[] = "Можно привязывать только активных учеников этой школы.";
+            $student_ids = [];
         }
 
         if (strlen($password) < 6) {
@@ -173,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             } catch (PDOException $e) {
                 $pdo->rollBack();
-                $error = "Ошибка при добавлении родителя: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -181,10 +180,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     // Обработка редактирования родителя
     elseif ($action === 'edit' && $parent_id > 0) {
+        // Защита от межшкольного изменения: редактируемый пользователь должен быть родителем этой школы
+        $parent_owner_stmt = $pdo->prepare("
+            SELECT 1 FROM users u JOIN roles r ON r.id = u.role_id
+            WHERE u.id = ? AND u.school_id = ? AND r.name = 'parent'
+        ");
+        $parent_owner_stmt->execute([$parent_id, $school_id]);
+        if (!$parent_owner_stmt->fetchColumn()) {
+            $_SESSION['error_message'] = 'Родитель не найден в вашей школе.';
+            header('Location: parents.php');
+            exit;
+        }
         $full_name = trim($_POST['full_name']);
         $email = trim($_POST['email']);
         $phone = !empty($_POST['phone']) ? trim($_POST['phone']) : null;
-        $student_ids = isset($_POST['student_ids']) ? $_POST['student_ids'] : [];
+        $student_ids = validateParentStudentIds($pdo, $_POST['student_ids'] ?? [], (int)$school_id);
         $is_active = isset($_POST['is_active']) ? 1 : 0;
 
         // Валидация
@@ -198,6 +208,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Введите email";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Введите корректный email";
+        }
+
+        if ($student_ids === false) {
+            $errors[] = "Можно привязывать только активных учеников этой школы.";
+            $student_ids = [];
         }
 
         if (empty($errors)) {
@@ -245,7 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             } catch (PDOException $e) {
                 $pdo->rollBack();
-                $error = "Ошибка при обновлении данных родителя: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -256,11 +271,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Обработка удаления родителя
 if ($action === 'delete' && $parent_id > 0) {
     try {
-        // Деактивируем пользователя (не удаляем полностью)
-        $stmt = $pdo->prepare("UPDATE users SET is_active = FALSE WHERE id = ? AND school_id = ?");
-        $stmt->execute([$parent_id, $school_id]);
+        $deactivated = deactivateSchoolUser($pdo, $parent_id, (int)$school_id);
 
-        if ($stmt->rowCount() > 0) {
+        if ($deactivated) {
             $_SESSION['success_message'] = "Родитель успешно удален!";
         } else {
             $_SESSION['error_message'] = "Родитель не найден или у вас нет прав для его удаления";
@@ -268,7 +281,7 @@ if ($action === 'delete' && $parent_id > 0) {
         header('Location: parents.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении родителя: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: parents.php');
         exit;
     }
@@ -305,7 +318,7 @@ if (($action === 'edit' || $action === 'view') && $parent_id > 0) {
         $parent_students = $stmt->fetchAll();
 
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при получении данных родителя: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: parents.php');
         exit;
     }
@@ -353,6 +366,7 @@ try {
         SELECT u.id, u.full_name, 
                COALESCE(c.name, 'Не назначен') as class_name
         FROM users u
+        JOIN roles r ON r.id = u.role_id AND r.name = 'student'
         LEFT JOIN classes c ON u.class_id = c.id
         WHERE u.school_id = ? AND u.is_active = TRUE
         ORDER BY c.name, u.full_name
@@ -363,10 +377,11 @@ try {
     // Если ошибка из-за отсутствия class_id, делаем простой запрос
     try {
         $stmt = $pdo->prepare("
-            SELECT id, full_name, 'Не назначен' as class_name
-            FROM users 
-            WHERE school_id = ? AND is_active = TRUE
-            ORDER BY full_name
+            SELECT u.id, u.full_name, 'Не назначен' as class_name
+            FROM users u
+            JOIN roles r ON r.id = u.role_id AND r.name = 'student'
+            WHERE u.school_id = ? AND u.is_active = TRUE
+            ORDER BY u.full_name
         ");
         $stmt->execute([$school_id]);
         $students = $stmt->fetchAll();
@@ -630,6 +645,9 @@ try {
             padding: 15px;
             max-height: 300px;
             overflow-y: auto;
+            overflow-x: hidden;
+            min-width: 0;
+            width: 100%;
         }
 
         .search-box {
@@ -658,11 +676,15 @@ try {
             display: flex;
             flex-direction: column;
             gap: 8px;
+            min-width: 0;
         }
 
         .student-checkbox-item {
             display: flex;
             align-items: center;
+            gap: 12px;
+            min-width: 0;
+            width: 100%;
             padding: 10px;
             border: 1px solid #f0f0f0;
             border-radius: 6px;
@@ -681,12 +703,18 @@ try {
         }
 
         .student-checkbox-item input[type="checkbox"] {
-            margin-right: 12px;
+            width: 18px;
+            height: 18px;
+            flex: 0 0 18px;
+            margin: 0;
+            padding: 0;
             transform: scale(1.2);
         }
 
         .student-checkbox-info {
             flex: 1;
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
 
         .student-checkbox-name {
@@ -719,38 +747,10 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-            <?php if ($school): ?>
-                <div class="school-info">
-                    <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                </div>
-            <?php endif; ?>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge school-admin">Администратор школы</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li class="nav-section">Управление школой</li>
-                <li><a href="classes.php" class="nav-link">👨‍🏫 Классы</a></li>
-                <li><a href="teachers.php" class="nav-link">👥 Учителя</a></li>
-                <li><a href="students.php" class="nav-link">🎓 Ученики</a></li>
-                <li><a href="parents.php" class="nav-link active">👨‍👩‍👧‍👦 Родители</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="grade_types.php" class="nav-link">📊 Система оценок</a></li>
-                <li><a href="grade_weights.php" class="nav-link">⚖️ Веса оценок</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php
+    $schoolAdminActivePage = 'parents';
+    require __DIR__ . '/../includes/school_admin_sidebar.php';
+    ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -765,15 +765,15 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -781,6 +781,9 @@ try {
                 <div class="admin-form">
                     <h2><?php echo $action === 'add' ? 'Добавить родителя' : 'Редактировать данные родителя'; ?></h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$parent_id; ?>">
                         <div class="form-section">
                             <h3>Основная информация</h3>
                             <div class="form-grid">
@@ -967,6 +970,12 @@ try {
                             <a href="parents.php?action=add" class="btn btn-primary">➕ Добавить первого родителя</a>
                         </div>
                     <?php else: ?>
+                        <div class="admin-filters">
+                            <div class="filter-group">
+                                <label for="parentTableSearch">Поиск родителя</label>
+                                <input type="search" id="parentTableSearch" placeholder="ФИО, логин или email..." autocomplete="off">
+                            </div>
+                        </div>
                         <table class="data-table">
                             <thead>
                             <tr>
@@ -996,7 +1005,7 @@ try {
                                         <div class="table-actions">
                                             <a href="parents.php?action=view&id=<?php echo $parent['id']; ?>" class="btn-action btn-view" title="Просмотр">👁️</a>
                                             <a href="parents.php?action=edit&id=<?php echo $parent['id']; ?>" class="btn-action btn-edit" title="Редактировать">✏️</a>
-                                            <a href="parents.php?action=delete&id=<?php echo $parent['id']; ?>" class="btn-action btn-delete" title="Удалить" onclick="return confirm('Вы уверены, что хотите удалить родителя &laquo;<?php echo htmlspecialchars($parent['full_name']); ?>&raquo;?')">🗑️</a>
+                                            <?php echo csrf_post_button('delete', (int)$parent['id'], '🗑️', 'btn-action btn-delete', 'Вы уверены, что хотите удалить этого родителя?'); ?>
                                         </div>
                                     </td>
                                 </tr>
@@ -1012,24 +1021,36 @@ try {
 
 <script>
     // Поиск учеников
-    document.getElementById('studentSearch').addEventListener('input', function(e) {
-        const searchTerm = e.target.value.toLowerCase();
-        const studentItems = document.querySelectorAll('.student-checkbox-item');
+    const studentSearch = document.getElementById('studentSearch');
+    if (studentSearch) {
+        studentSearch.addEventListener('input', function(e) {
+            const searchTerm = e.target.value.toLowerCase();
+            const studentItems = document.querySelectorAll('.student-checkbox-item');
 
-        studentItems.forEach(item => {
-            const studentName = item.getAttribute('data-name');
-            if (studentName.includes(searchTerm)) {
-                item.style.display = 'flex';
-            } else {
-                item.style.display = 'none';
-            }
+            studentItems.forEach(item => {
+                const studentName = item.getAttribute('data-name');
+                item.style.display = studentName.includes(searchTerm) ? 'flex' : 'none';
+            });
         });
-    });
+    }
+
+    const parentTableSearch = document.getElementById('parentTableSearch');
+    if (parentTableSearch) {
+        parentTableSearch.addEventListener('input', function() {
+            const query = this.value.trim().toLowerCase();
+            document.querySelectorAll('.parents-container .data-table tbody tr').forEach(row => {
+                row.hidden = query !== '' && !row.textContent.toLowerCase().includes(query);
+            });
+        });
+    }
 
     // Подсчет выбранных учеников
     function updateSelectedCount() {
         const selectedCount = document.querySelectorAll('input[name="student_ids[]"]:checked').length;
-        document.getElementById('selectedCount').textContent = selectedCount;
+        const selectedCountElement = document.getElementById('selectedCount');
+        if (selectedCountElement) {
+            selectedCountElement.textContent = selectedCount;
+        }
     }
 
     // Обработка клика по чекбоксам

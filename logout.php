@@ -1,25 +1,37 @@
 <?php
-session_start();
+require_once __DIR__ . '/config/session.php';
+
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/config/auth.php';
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    header('Allow: POST');
+    exit('Для выхода требуется POST-запрос.');
+}
+
+// Если сессии уже нет (например, истекла) — просто показываем страницу выхода, а не ошибку CSRF
+if (isset($_SESSION['user_id'])) {
+    verify_csrf_token();
+}
 
 // Сохраняем информацию о пользователе для сообщения
 $user_name = $_SESSION['user_name'] ?? 'Пользователь';
+$user_id = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+$current_session_id = session_id();
+$session_cleanup_failed = false;
 
-// Полностью очищаем все данные сессии
-$_SESSION = array();
+destroyAppSession();
 
-// Удаляем cookie сессии
-if (ini_get("session.use_cookies")) {
-    $params = session_get_cookie_params();
-    setcookie(session_name(), '', time() - 42000,
-        $params["path"],
-        $params["domain"],
-        $params["secure"],
-        $params["httponly"]
-    );
+if ($user_id > 0) {
+    try {
+        // Запись в user_sessions НЕ удаляем: таблица используется как история входов
+        // (статистика в профилях и на дашборде супер-админа).
+    } catch (Throwable $e) {
+        error_log('Failed to close user session record: ' . $e->getMessage());
+        $session_cleanup_failed = true;
+    }
 }
-
-// Уничтожаем сессию
-session_destroy();
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -93,6 +105,16 @@ session_destroy();
             color: #666;
             font-size: 14px;
         }
+
+        .cleanup-warning {
+            margin-top: 20px;
+            padding: 12px;
+            border: 1px solid #f0ad4e;
+            border-radius: 8px;
+            background: #fff8e6;
+            color: #795b18;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -102,6 +124,9 @@ session_destroy();
     <div class="logout-message">
         <h1>Выход выполнен</h1>
         <p>Вы успешно вышли из системы.<br>До свидания, <?php echo htmlspecialchars($user_name); ?>!</p>
+        <?php if ($session_cleanup_failed): ?>
+            <p class="cleanup-warning" role="status">Не удалось очистить запись сессии в базе данных. Выход из системы выполнен, но обратитесь к администратору, если проблема повторится.</p>
+        <?php endif; ?>
     </div>
 
     <a href="login.php" class="btn-login">Войти снова</a>

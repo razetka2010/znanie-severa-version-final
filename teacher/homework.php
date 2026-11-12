@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -8,50 +8,37 @@ requireTeacher();
 $pdo = getDatabaseConnection();
 $teacher_id = $_SESSION['user_id'];
 $school_id = $_SESSION['user_school_id'];
+$selected_class_id = filter_input(INPUT_GET, 'class_id', FILTER_VALIDATE_INT) ?: 0;
+$selected_subject_id = filter_input(INPUT_GET, 'subject_id', FILTER_VALIDATE_INT) ?: 0;
+$selected_lesson_date = '';
+$selected_due_date = '';
 
-// Поддерживаем старую локальную таблицу homework без потери существующих данных.
-try {
-    $homework_table = $pdo->query("SHOW TABLES LIKE 'homework'")->fetchColumn();
-    if (!$homework_table) {
-        $pdo->exec("CREATE TABLE homework (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            teacher_id INT NOT NULL,
-            class_id INT NOT NULL,
-            subject_id INT NOT NULL,
-            title VARCHAR(255) NOT NULL,
-            due_date DATE NOT NULL,
-            description TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )");
-    } else {
-        $title_column = $pdo->query("SHOW COLUMNS FROM homework LIKE 'title'")->fetch();
-        if (!$title_column) {
-            $pdo->exec("ALTER TABLE homework ADD COLUMN title VARCHAR(255) NOT NULL DEFAULT 'Домашнее задание' AFTER subject_id");
+if (isset($_GET['lesson_date']) && is_string($_GET['lesson_date'])) {
+    $lesson_date_check = DateTime::createFromFormat('Y-m-d', $_GET['lesson_date']);
+    if ($lesson_date_check && $lesson_date_check->format('Y-m-d') === $_GET['lesson_date']
+        && $selected_class_id > 0 && $selected_subject_id > 0) {
+        $lesson_access_stmt = $pdo->prepare("
+            SELECT 1
+            FROM schedule
+            WHERE teacher_id = ? AND school_id = ? AND class_id = ? AND subject_id = ? AND lesson_date = ?
+            LIMIT 1
+        ");
+        $lesson_access_stmt->execute([
+            $teacher_id,
+            $school_id,
+            $selected_class_id,
+            $selected_subject_id,
+            $_GET['lesson_date']
+        ]);
+        if ($lesson_access_stmt->fetchColumn()) {
+            $selected_lesson_date = $_GET['lesson_date'];
+            $selected_due_date = $selected_lesson_date;
+        } else {
+            $_SESSION['error_message'] = 'Выбранный урок не найден или недоступен.';
         }
+    } else {
+        $_SESSION['error_message'] = 'Некорректно указана дата урока.';
     }
-} catch (PDOException $e) {
-    error_log("Ошибка при проверке таблицы homework: " . $e->getMessage());
-}
-
-// Создаем таблицу домашних заданий если её нет
-try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS homework (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            teacher_id INT NOT NULL,
-            class_id INT NOT NULL,
-            subject_id INT NOT NULL,
-            title VARCHAR(255) NOT NULL,
-            due_date DATE NOT NULL,
-            description TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (teacher_id) REFERENCES users(id),
-            FOREIGN KEY (class_id) REFERENCES classes(id),
-            FOREIGN KEY (subject_id) REFERENCES subjects(id)
-        )
-    ");
-} catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы homework: " . $e->getMessage());
 }
 
 // Получаем информацию о учителе
@@ -90,26 +77,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add_homework') {
         $class_id = intval($_POST['class_id']);
         $subject_id = intval($_POST['subject_id']);
-        $title = trim($_POST['title'] ?? '');
-        $due_date = $_POST['due_date'];
-        $description = trim($_POST['description']);
+        $title = is_string($_POST['title'] ?? null) ? trim($_POST['title']) : '';
+        $due_date = is_string($_POST['due_date'] ?? null) ? trim($_POST['due_date']) : '';
+        $lesson_date = is_string($_POST['lesson_date'] ?? null) ? trim($_POST['lesson_date']) : '';
+        $description = is_string($_POST['description'] ?? null) ? trim($_POST['description']) : '';
 
         try {
-            if ($title === '' || $description === '' || !$due_date) {
+            $due_date_check = DateTime::createFromFormat('Y-m-d', $due_date);
+            if ($title === '' || $description === '' || !$due_date_check || $due_date_check->format('Y-m-d') !== $due_date) {
                 throw new InvalidArgumentException('Заполните название, описание и срок сдачи задания.');
             }
+            if ($lesson_date !== '') {
+                $lesson_date_check = DateTime::createFromFormat('Y-m-d', $lesson_date);
+                if (!$lesson_date_check || $lesson_date_check->format('Y-m-d') !== $lesson_date) {
+                    throw new InvalidArgumentException('Некорректно указана дата урока.');
+                }
+            }
 
-            $access_stmt = $pdo->prepare("SELECT 1 FROM schedule WHERE teacher_id = ? AND school_id = ? AND class_id = ? AND subject_id = ? LIMIT 1");
-            $access_stmt->execute([$teacher_id, $school_id, $class_id, $subject_id]);
+            $access_query = "SELECT 1 FROM schedule WHERE teacher_id = ? AND school_id = ? AND class_id = ? AND subject_id = ?";
+            $access_params = [$teacher_id, $school_id, $class_id, $subject_id];
+            if ($lesson_date !== '') {
+                $access_query .= " AND lesson_date = ?";
+                $access_params[] = $lesson_date;
+            }
+            $access_query .= " LIMIT 1";
+            $access_stmt = $pdo->prepare($access_query);
+            $access_stmt->execute($access_params);
             if (!$access_stmt->fetchColumn()) {
                 throw new InvalidArgumentException('Выбранные класс и предмет не назначены этому учителю.');
             }
 
             $stmt = $pdo->prepare("
-                INSERT INTO homework (teacher_id, class_id, subject_id, title, due_date, description, created_at) 
-                VALUES (?, ?, ?, ?, ?, ?, NOW())
+                INSERT INTO homework (teacher_id, class_id, subject_id, title, due_date, lesson_date, description, created_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
             ");
-            $stmt->execute([$teacher_id, $class_id, $subject_id, $title, $due_date, $description]);
+            $stmt->execute([$teacher_id, $class_id, $subject_id, $title, $due_date, $lesson_date !== '' ? $lesson_date : null, $description]);
             logUserAction($pdo, 'homework_created', json_encode([
                 'class_id' => $class_id,
                 'subject_id' => $subject_id,
@@ -120,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             header('Location: homework.php');
             exit;
         } catch (PDOException $e) {
-            $_SESSION['error_message'] = "Ошибка при добавлении задания: " . $e->getMessage();
+            $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
             header('Location: homework.php');
             exit;
         } catch (InvalidArgumentException $e) {
@@ -143,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             header('Location: homework.php');
             exit;
         } catch (PDOException $e) {
-            $_SESSION['error_message'] = "Ошибка при удалении задания: " . $e->getMessage();
+            $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
             header('Location: homework.php');
             exit;
         }
@@ -607,32 +609,7 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?= htmlspecialchars($teacher['full_name']) ?></strong>
-                <span class="role-badge">Учитель</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">📊 Главная</a></li>
-                <li class="nav-section">Учебный процесс</li>
-                <li><a href="grades.php" class="nav-link">📝 Журнал оценок</a></li>
-                <li><a href="class_journal.php" class="nav-link">📋 Классный журнал</a></li>
-                <li><a href="homework.php" class="nav-link active">📚 Домашние задания</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Моё расписание</a></li>
-                <li><a href="calendar.php" class="nav-link">🗓️ Календарь</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li><a href="reports_advanced.php" class="nav-link">📊 Расширенные отчёты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $teacherActivePage = 'homework'; require __DIR__ . '/../includes/teacher_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -644,11 +621,11 @@ try {
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?= $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?= consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?= $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?= consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <!-- Форма добавления задания -->
@@ -667,7 +644,7 @@ try {
                             <select name="class_id" required>
                                 <option value="">Выберите класс</option>
                                 <?php foreach ($classes as $class): ?>
-                                    <option value="<?= $class['id'] ?>">
+                                    <option value="<?= $class['id'] ?>" <?= $selected_class_id === (int)$class['id'] ? 'selected' : '' ?>>
                                         <?= htmlspecialchars($class['name']) ?> (<?= $class['grade_level'] ?> класс)
                                     </option>
                                 <?php endforeach; ?>
@@ -679,7 +656,7 @@ try {
                             <select name="subject_id" required>
                                 <option value="">Выберите предмет</option>
                                 <?php foreach ($subjects as $subject): ?>
-                                    <option value="<?= $subject['id'] ?>">
+                                    <option value="<?= $subject['id'] ?>" <?= $selected_subject_id === (int)$subject['id'] ? 'selected' : '' ?>>
                                         <?= htmlspecialchars($subject['name']) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -688,13 +665,18 @@ try {
 
                         <div class="form-group">
                             <label>Название задания:</label>
-                            <input type="text" name="title" required maxlength="255" placeholder="Например: Упражнения по теме">
+                            <input type="text" name="title" required maxlength="255" placeholder="Например: Упражнения по теме" value="<?= htmlspecialchars($selected_lesson_date !== '' ? 'Домашнее задание к уроку ' . date('d.m.Y', strtotime($selected_lesson_date)) : '', ENT_QUOTES, 'UTF-8') ?>">
                         </div>
 
                         <div class="form-group">
                             <label>Срок сдачи:</label>
-                            <input type="date" name="due_date" required min="<?= date('Y-m-d') ?>">
+                            <input type="date" name="due_date" required min="<?= $selected_due_date !== '' ? htmlspecialchars($selected_due_date, ENT_QUOTES, 'UTF-8') : date('Y-m-d') ?>" value="<?= htmlspecialchars($selected_due_date, ENT_QUOTES, 'UTF-8') ?>">
                         </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Дата урока:</label>
+                        <input type="date" name="lesson_date" value="<?= htmlspecialchars($selected_lesson_date, ENT_QUOTES, 'UTF-8') ?>">
                     </div>
 
                     <div class="form-group">
@@ -769,7 +751,10 @@ try {
 
 <script>
     // Установка минимальной даты как сегодня
-    document.querySelector('input[name="due_date"]').min = new Date().toISOString().split('T')[0];
+    const dueDateInput = document.querySelector('input[name="due_date"]');
+    if (!dueDateInput.value) {
+        dueDateInput.min = new Date().toISOString().split('T')[0];
+    }
 
     // Подтверждение удаления
     document.querySelectorAll('form[action="delete_homework"]').forEach(form => {

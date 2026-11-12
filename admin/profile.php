@@ -1,12 +1,9 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once 'config/database.php';
+require_once 'config/auth.php';
 
-// Проверка авторизации
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit;
-}
+requireSuperAdmin();
 
 $pdo = getDatabaseConnection();
 $user_id = $_SESSION['user_id'];
@@ -34,7 +31,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $full_name = trim($_POST['full_name']);
         $email = trim($_POST['email']);
         $phone = trim($_POST['phone']);
-        $position = trim($_POST['position']);
 
         // Валидация
         $errors = [];
@@ -60,10 +56,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $stmt = $pdo->prepare("
                     UPDATE users 
-                    SET full_name = ?, email = ?, phone = ?, position = ?, updated_at = CURRENT_TIMESTAMP 
+                    SET full_name = ?, email = ?, phone = ?, updated_at = CURRENT_TIMESTAMP 
                     WHERE id = ?
                 ");
-                $stmt->execute([$full_name, $email, $phone, $position, $user_id]);
+                $stmt->execute([$full_name, $email, $phone, $user_id]);
 
                 // Обновляем данные в сессии
                 $_SESSION['user_name'] = $full_name;
@@ -73,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: profile.php');
                 exit;
             } catch (PDOException $e) {
-                $errors[] = "Ошибка при обновлении профиля: " . $e->getMessage();
+                $errors[] = publicErrorMessage($e, basename(__FILE__));
             }
         }
     }
@@ -111,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: profile.php');
                 exit;
             } catch (PDOException $e) {
-                $errors_password[] = "Ошибка при изменении пароля: " . $e->getMessage();
+                $errors_password[] = publicErrorMessage($e, basename(__FILE__));
             }
         }
     }
@@ -151,48 +147,19 @@ $activity_stats['total_logins'] = $stmt->fetch()['count'];
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge"><?php echo htmlspecialchars($_SESSION['user_role']); ?></span>
-            </div>
-
-            <ul class="nav-menu">
-                <li><a href="super_dashboard.php" class="nav-link">📊 Обзор</a></li>
-                <?php if ($_SESSION['user_role'] === 'super_admin'): ?>
-                    <li class="nav-section">Администрирование</li>
-                    <li><a href="schools.php" class="nav-link">🏫 Учебные заведения</a></li>
-                    <li><a href="users.php" class="nav-link">👥 Пользователи</a></li>
-                    <li><a href="roles.php" class="nav-link">🔐 Роли и права</a></li>
-                    <li><a href="curriculum.php" class="nav-link">📚 Учебные планы</a></li>
-                    <li><a href="academic_periods.php" class="nav-link">📅 Учебные периоды</a></li>
-                    <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <?php endif; ?>
-                <li class="nav-section">Общее</li>
-                <li><a href="profile.php" class="nav-link active">👤 Профиль</a></li>
-                <li><a href="Download Russian" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $adminActivePage = 'profile'; require __DIR__ . '/../includes/admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
             <div class="header-title">
                 <h1>Мой профиль</h1>
-                <p><?php echo htmlspecialchars($_SESSION['user_role']); ?> • <?php echo htmlspecialchars($_SESSION['user_login']); ?></p>
+                <p><?php echo htmlspecialchars(getRoleDisplayName((string)$_SESSION['user_role'])); ?> • <?php echo htmlspecialchars($_SESSION['user_login']); ?></p>
             </div>
         </header>
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <div class="profile-container">
@@ -219,7 +186,7 @@ $activity_stats['total_logins'] = $stmt->fetch()['count'];
                                 </div>
                                 <div class="info-item">
                                     <label>Роль:</label>
-                                    <span class="role-badge"><?php echo htmlspecialchars($user['role_name']); ?></span>
+                                    <span class="role-badge <?php echo htmlspecialchars(str_replace('_', '-', $user['role_name']), ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars(getRoleDisplayName((string)$user['role_name'])); ?></span>
                                 </div>
                                 <div class="info-item">
                                     <label>Учебное заведение:</label>
@@ -277,6 +244,7 @@ $activity_stats['total_logins'] = $stmt->fetch()['count'];
                     </div>
                     <div class="form-card">
                         <form method="POST">
+                            <?php echo csrf_field(); ?>
                             <input type="hidden" name="update_profile" value="1">
 
                             <div class="form-grid">
@@ -299,8 +267,9 @@ $activity_stats['total_logins'] = $stmt->fetch()['count'];
                                 </div>
                                 <div class="form-group">
                                     <label for="position">Должность</label>
-                                    <input type="text" id="position" name="position"
-                                           value="<?php echo htmlspecialchars($user['position']); ?>">
+                                    <input type="text" id="position"
+                                           value="<?php echo htmlspecialchars($user['position'] ?? ''); ?>" readonly>
+                                    <small class="form-hint">Изменить должность может администратор.</small>
                                 </div>
                             </div>
 
@@ -308,7 +277,7 @@ $activity_stats['total_logins'] = $stmt->fetch()['count'];
                                 <div class="alert alert-error">
                                     <ul>
                                         <?php foreach ($errors as $error): ?>
-                                            <li><?php echo $error; ?></li>
+                                            <li><?php echo htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></li>
                                         <?php endforeach; ?>
                                     </ul>
                                 </div>
@@ -328,6 +297,7 @@ $activity_stats['total_logins'] = $stmt->fetch()['count'];
                     </div>
                     <div class="form-card">
                         <form method="POST">
+                            <?php echo csrf_field(); ?>
                             <input type="hidden" name="change_password" value="1">
 
                             <div class="form-grid">
@@ -350,7 +320,7 @@ $activity_stats['total_logins'] = $stmt->fetch()['count'];
                                 <div class="alert alert-error">
                                     <ul>
                                         <?php foreach ($errors_password as $error): ?>
-                                            <li><?php echo $error; ?></li>
+                                            <li><?php echo htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></li>
                                         <?php endforeach; ?>
                                     </ul>
                                 </div>

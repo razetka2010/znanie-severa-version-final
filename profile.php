@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/config/session.php';
 require_once 'config/database.php';
 require_once 'config/auth.php';
 
@@ -10,10 +10,12 @@ $user_id = $_SESSION['user_id'];
 
 // Получение данных пользователя
 $stmt = $pdo->prepare("
-    SELECT u.*, r.name as role_name, s.full_name as school_name 
+    SELECT u.*, r.name as role_name, s.full_name as school_name, s.short_name as school_short_name,
+           c.name as class_name
     FROM users u 
     LEFT JOIN roles r ON u.role_id = r.id 
     LEFT JOIN schools s ON u.school_id = s.id 
+    LEFT JOIN classes c ON c.id = u.class_id
     WHERE u.id = ?
 ");
 $stmt->execute([$user_id]);
@@ -32,7 +34,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $full_name = trim($_POST['full_name']);
         $email = trim($_POST['email']);
         $phone = trim($_POST['phone']);
-        $position = trim($_POST['position']);
 
         // Валидация
         $errors = [];
@@ -58,13 +59,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $stmt = $pdo->prepare("
                     UPDATE users 
-                    SET full_name = ?, email = ?, phone = ?, position = ?, updated_at = CURRENT_TIMESTAMP 
+                    SET full_name = ?, email = ?, phone = ?, updated_at = CURRENT_TIMESTAMP 
                     WHERE id = ?
                 ");
-                $stmt->execute([$full_name, $email, $phone, $position, $user_id]);
+                $stmt->execute([$full_name, $email, $phone, $user_id]);
 
                 logUserAction($pdo, 'profile_updated', json_encode([
-                    'fields' => ['full_name', 'email', 'phone', 'position']
+                    'fields' => ['full_name', 'email', 'phone']
                 ], JSON_UNESCAPED_UNICODE));
 
                 // Обновляем данные в сессии
@@ -75,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: profile.php');
                 exit;
             } catch (PDOException $e) {
-                $errors[] = "Ошибка при обновлении профиля: " . $e->getMessage();
+                $errors[] = publicErrorMessage($e, basename(__FILE__));
             }
         }
     }
@@ -113,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: profile.php');
                 exit;
             } catch (PDOException $e) {
-                $errors_password[] = "Ошибка при изменении пароля: " . $e->getMessage();
+                $errors_password[] = publicErrorMessage($e, basename(__FILE__));
             }
         }
     }
@@ -123,18 +124,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $activity_stats = [];
 
 try {
-    // Создаем таблицу user_sessions если её нет
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS user_sessions (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            user_id INT NOT NULL,
-            session_id VARCHAR(255) NOT NULL,
-            ip_address VARCHAR(45),
-            user_agent TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ");
-
     // Количество входов за последние 30 дней
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as count 
@@ -173,9 +162,45 @@ try {
     <title>Профиль - Знание Севера</title>
     <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/profile.css">
+    <?php if (in_array($_SESSION['user_role'], ['teacher', 'class_teacher'], true)): ?>
+        <link rel="stylesheet" href="css/teacher.css">
+    <?php endif; ?>
+    <?php if ($_SESSION['user_role'] === 'student'): ?>
+        <link rel="stylesheet" href="css/student.css">
+    <?php endif; ?>
 </head>
 <body>
 <div class="dashboard-container">
+    <?php if ($_SESSION['user_role'] === 'school_admin'): ?>
+        <?php
+        $schoolAdminActivePage = 'profile';
+        $schoolAdminBasePath = 'school_admin/';
+        $schoolAdminProfilePath = 'profile.php';
+        $schoolAdminLogoutPath = 'logout.php';
+        $school = [
+            'short_name' => $user['school_short_name'] ?? '',
+            'full_name' => $user['school_name'] ?? ''
+        ];
+        require __DIR__ . '/includes/school_admin_sidebar.php';
+        ?>
+    <?php elseif (in_array($_SESSION['user_role'], ['teacher', 'class_teacher'], true)): ?>
+        <?php
+        $teacherActivePage = 'profile';
+        $teacherBasePath = 'teacher/';
+        $teacherProfilePath = 'profile.php';
+        $teacherLogoutPath = 'logout.php';
+        require __DIR__ . '/includes/teacher_sidebar.php';
+        ?>
+    <?php elseif ($_SESSION['user_role'] === 'student'): ?>
+        <?php
+        $studentActivePage = 'profile';
+        $studentBasePath = 'student/';
+        $studentProfilePath = 'profile.php';
+        $studentLogoutPath = 'logout.php';
+        $student = $user;
+        require __DIR__ . '/includes/student_sidebar.php';
+        ?>
+    <?php else: ?>
     <!-- Боковая панель -->
     <aside class="sidebar">
         <div class="sidebar-header">
@@ -186,48 +211,42 @@ try {
         <nav class="sidebar-nav">
             <div class="user-info">
                 <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge"><?php echo htmlspecialchars($_SESSION['user_role']); ?></span>
+                <span class="role-badge <?php echo htmlspecialchars(str_replace('_', '-', (string)$_SESSION['user_role']), ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars(getRoleDisplayName((string)$_SESSION['user_role'])); ?></span>
             </div>
 
             <ul class="nav-menu">
                 <?php if ($_SESSION['user_role'] === 'super_admin'): ?>
-                    <li><a href="admin/super_dashboard.php" class="nav-link">📊 Обзор</a></li>
-                    <li class="nav-section">Администрирование</li>
+                    <li><a href="admin/super_dashboard.php" class="nav-link">🏠 Главная</a></li>
+                    <li class="nav-section">Системное управление</li>
                     <li><a href="admin/schools.php" class="nav-link">🏫 Учебные заведения</a></li>
                     <li><a href="admin/users.php" class="nav-link">👥 Пользователи</a></li>
                     <li><a href="admin/roles.php" class="nav-link">🔐 Роли и права</a></li>
                     <li><a href="admin/curriculum.php" class="nav-link">📚 Учебные планы</a></li>
                     <li><a href="admin/academic_periods.php" class="nav-link">📅 Учебные периоды</a></li>
-                    <li><a href="admin/reports.php" class="nav-link">📈 Отчеты</a></li>
-                <?php elseif ($_SESSION['user_role'] === 'school_admin'): ?>
-                    <li><a href="school_admin/dashboard.php" class="nav-link">📊 Обзор</a></li>
-                    <li><a href="school_admin/reports.php" class="nav-link">📈 Отчеты школы</a></li>
-                <?php elseif (in_array($_SESSION['user_role'], ['teacher', 'class_teacher'])): ?>
-                    <li><a href="teacher/dashboard.php" class="nav-link">📊 Обзор</a></li>
-                    <li><a href="teacher/reports.php" class="nav-link">📈 Отчеты</a></li>
-                <?php elseif ($_SESSION['user_role'] === 'student'): ?>
-                    <li><a href="student/dashboard.php" class="nav-link">📊 Обзор</a></li>
+                    <li><a href="admin/reports.php" class="nav-link">📈 Системные отчёты</a></li>
+                    <li><a href="admin/audit_logs.php" class="nav-link">🔎 Аудит действий</a></li>
                 <?php elseif ($_SESSION['user_role'] === 'parent'): ?>
                     <li><a href="parent/dashboard.php" class="nav-link">📊 Обзор</a></li>
                 <?php endif; ?>
                 <li class="nav-section">Общее</li>
                 <li><a href="profile.php" class="nav-link active">👤 Профиль</a></li>
-                <li><a href="logout.php" class="nav-link">🚪 Выход</a></li>
+                <li><?= logoutForm('logout.php') ?></li>
             </ul>
         </nav>
     </aside>
+    <?php endif; ?>
 
     <main class="main-content">
         <header class="content-header">
             <div class="header-title">
                 <h1>Мой профиль</h1>
-                <p><?php echo htmlspecialchars($_SESSION['user_role']); ?> • <?php echo htmlspecialchars($_SESSION['user_login']); ?></p>
+                <p><?php echo htmlspecialchars(getRoleDisplayName((string)$_SESSION['user_role'])); ?> • <?php echo htmlspecialchars($_SESSION['user_login']); ?></p>
             </div>
         </header>
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <div class="profile-container">
@@ -254,7 +273,7 @@ try {
                                 </div>
                                 <div class="info-item">
                                     <label>Роль:</label>
-                                    <span class="role-badge"><?php echo htmlspecialchars($user['role_name']); ?></span>
+                                    <span class="role-badge <?php echo htmlspecialchars(str_replace('_', '-', $user['role_name']), ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars(getRoleDisplayName((string)$user['role_name'])); ?></span>
                                 </div>
                                 <div class="info-item">
                                     <label>Учебное заведение:</label>
@@ -328,8 +347,9 @@ try {
                                 </div>
                                 <div class="form-group">
                                     <label for="position">Должность</label>
-                                    <input type="text" id="position" name="position"
-                                           value="<?php echo htmlspecialchars($user['position']); ?>">
+                                    <input type="text" id="position"
+                                           value="<?php echo htmlspecialchars($user['position'] ?? ''); ?>" readonly>
+                                    <small class="form-hint">Изменить должность может администратор.</small>
                                 </div>
                             </div>
 
@@ -337,7 +357,7 @@ try {
                                 <div class="alert alert-error">
                                     <ul>
                                         <?php foreach ($errors as $error): ?>
-                                            <li><?php echo $error; ?></li>
+                                            <li><?php echo htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></li>
                                         <?php endforeach; ?>
                                     </ul>
                                 </div>
@@ -380,7 +400,7 @@ try {
                                 <div class="alert alert-error">
                                     <ul>
                                         <?php foreach ($errors_password as $error): ?>
-                                            <li><?php echo $error; ?></li>
+                                            <li><?php echo htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></li>
                                         <?php endforeach; ?>
                                     </ul>
                                 </div>

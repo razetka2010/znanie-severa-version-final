@@ -1,12 +1,8 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
-
-// Проверка авторизации
-if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'super_admin') {
-    header('Location: ../login.php');
-    exit;
-}
+require_once '../config/auth.php';
+requireSuperAdmin();
 
 // Функция для безопасного получения массива permissions
 function getSafePermissions($permissions_data) {
@@ -19,8 +15,8 @@ function getSafePermissions($permissions_data) {
 }
 
 $pdo = getDatabaseConnection();
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$role_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$role_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 // Базовые разрешения системы
 $available_permissions = [
@@ -28,7 +24,8 @@ $available_permissions = [
                 'name' => 'Системные разрешения',
                 'permissions' => [
                         'view_dashboard' => 'Просмотр панели управления',
-                        'manage_profile' => 'Управление своим профилем'
+                        'manage_profile' => 'Управление своим профилем',
+                        'view_audit_logs' => 'Просмотр журнала действий'
                 ]
         ],
         'schools' => [
@@ -67,20 +64,41 @@ $available_permissions = [
                         'manage_academic_periods' => 'Управление учебными периодами',
                         'view_classes' => 'Просмотр классов',
                         'manage_classes' => 'Управление классами',
+                        'view_schedule' => 'Просмотр расписания',
+                        'manage_schedule' => 'Управление расписанием',
                         'view_subjects' => 'Просмотр предметов',
-                        'manage_subjects' => 'Управление предметами'
+                        'manage_subjects' => 'Управление предметами',
+                        'view_grade_types' => 'Просмотр типов оценок',
+                        'manage_grade_types' => 'Управление типами оценок',
+                        'view_grade_weights' => 'Просмотр весов оценок',
+                        'manage_grade_weights' => 'Управление весами оценок'
                 ]
         ],
         'teaching' => [
                 'name' => 'Преподавание',
                 'permissions' => [
                         'view_students' => 'Просмотр учеников',
+                        'view_teachers' => 'Просмотр учителей',
+                        'manage_teachers' => 'Управление учителями',
+                        'view_parents' => 'Просмотр родителей',
+                        'manage_parents' => 'Управление родителями',
+                        'view_grades' => 'Просмотр оценок',
+                        'view_homework' => 'Просмотр домашних заданий',
+                        'view_class_journal' => 'Просмотр классного журнала',
                         'manage_grades' => 'Выставление оценок',
                         'manage_homework' => 'Управление домашними заданиями',
                         'view_attendance' => 'Просмотр посещаемости',
                         'manage_attendance' => 'Управление посещаемостью'
                 ]
         ],
+                'families' => [
+                    'name' => 'Взаимодействие с родителями',
+                    'permissions' => [
+                        'view_child_grades' => 'Просмотр оценок ребенка',
+                        'view_child_homework' => 'Просмотр домашних заданий ребенка',
+                        'contact_teachers' => 'Связь с учителями'
+                    ]
+                ],
         'reports' => [
                 'name' => 'Отчетность',
                 'permissions' => [
@@ -114,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($e->getCode() == 23000) {
                     $error = "Роль с таким названием уже существует!";
                 } else {
-                    $error = "Ошибка при создании роли: " . $e->getMessage();
+                    $error = publicErrorMessage($e, basename(__FILE__));
                 }
             }
         }
@@ -141,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($e->getCode() == 23000) {
                     $error = "Роль с таким названием уже существует!";
                 } else {
-                    $error = "Ошибка при обновлении роли: " . $e->getMessage();
+                    $error = publicErrorMessage($e, basename(__FILE__));
                 }
             }
         }
@@ -167,7 +185,7 @@ if ($action === 'delete' && $role_id > 0) {
         header('Location: roles.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении роли: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: roles.php');
         exit;
     }
@@ -210,34 +228,7 @@ $roles = $pdo->query("SELECT r.*, COUNT(u.id) as user_count
 </head>
 <body>
 <div class="dashboard-container">
-    <!-- Боковая панель -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-        </div>
-
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge"><?php echo htmlspecialchars($_SESSION['user_role']); ?></span>
-            </div>
-
-            <ul class="nav-menu">
-                <li><a href="super_dashboard.php" class="nav-link">📊 Обзор</a></li>
-                <li class="nav-section">Администрирование</li>
-                <li><a href="schools.php" class="nav-link">🏫 Учебные заведения</a></li>
-                <li><a href="users.php" class="nav-link">👥 Пользователи</a></li>
-                <li><a href="roles.php" class="nav-link active">🔐 Роли и права</a></li>
-                <li><a href="curriculum.php" class="nav-link">📚 Учебные планы</a></li>
-                <li><a href="academic_periods.php" class="nav-link">📅 Учебные периоды</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $adminActivePage = 'roles'; require __DIR__ . '/../includes/admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -256,15 +247,15 @@ $roles = $pdo->query("SELECT r.*, COUNT(u.id) as user_count
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -272,6 +263,9 @@ $roles = $pdo->query("SELECT r.*, COUNT(u.id) as user_count
                 <div class="form-container">
                     <h2><?php echo $action === 'add' ? 'Создание новой роли' : 'Редактирование роли'; ?></h2>
                     <form method="POST" class="role-form">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$role_id; ?>">
                         <div class="form-section">
                             <h3>Основная информация</h3>
                             <div class="form-grid">
@@ -345,7 +339,7 @@ $roles = $pdo->query("SELECT r.*, COUNT(u.id) as user_count
                         <h2><?php echo htmlspecialchars($role_data['name']); ?></h2>
                         <div class="view-actions">
                             <a href="roles.php?action=edit&id=<?php echo $role_data['id']; ?>" class="btn btn-primary">✏️ Редактировать</a>
-                            <button onclick="confirmDelete(<?php echo $role_data['id']; ?>)" class="btn btn-danger">🗑️ Удалить</button>
+                            <?php echo csrf_post_button('delete', (int)$role_data['id'], '🗑️ Удалить', 'btn btn-danger', 'Вы уверены, что хотите удалить эту роль?'); ?>
                         </div>
                     </div>
 
@@ -481,9 +475,7 @@ $roles = $pdo->query("SELECT r.*, COUNT(u.id) as user_count
                                                     👁️
                                                 </button>
                                                 <?php if ($role['user_count'] == 0): ?>
-                                                    <button class="btn-action btn-delete" title="Удалить" onclick="confirmDelete(<?php echo $role['id']; ?>)">
-                                                        🗑️
-                                                    </button>
+                                                    <?php echo csrf_post_button('delete', (int)$role['id'], '🗑️', 'btn-action btn-delete', 'Вы уверены, что хотите удалить эту роль?'); ?>
                                                 <?php else: ?>
                                                     <button class="btn-action btn-disabled" title="Нельзя удалить (есть пользователи)" disabled>
                                                         🚫

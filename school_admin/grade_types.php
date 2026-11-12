@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config/session.php';
 require_once '../config/database.php';
 require_once '../config/auth.php';
 
@@ -21,36 +21,88 @@ $school_stmt = $pdo->prepare("SELECT full_name, short_name FROM schools WHERE id
 $school_stmt->execute([$school_id]);
 $school = $school_stmt->fetch();
 
-$action = isset($_GET['action']) ? $_GET['action'] : '';
-$grade_type_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
-
-// Создаем таблицу типов оценок если её нет
+$active_grade_weights = [];
 try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS grade_types (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            school_id INT NOT NULL,
-            name VARCHAR(100) NOT NULL,
-            min_score INT NOT NULL DEFAULT 0,
-            max_score INT NOT NULL DEFAULT 5,
-            description TEXT,
-            color VARCHAR(7) DEFAULT '#3498db',
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
-        )
+    $weights_stmt = $pdo->prepare("
+        SELECT id, name, weight
+        FROM grade_weights
+        WHERE school_id = ? AND is_active = 1
+        ORDER BY weight, name
     ");
+    $weights_stmt->execute([$school_id]);
+    $active_grade_weights = $weights_stmt->fetchAll();
 } catch (PDOException $e) {
-    error_log("Ошибка при создании таблицы grade_types: " . $e->getMessage());
+    $error = publicErrorMessage($e, basename(__FILE__));
 }
+
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$grade_type_id = isset($_POST['id']) ? intval($_POST['id']) : (isset($_GET['id']) ? intval($_GET['id']) : 0);
 
 // Обработка добавления типа оценки
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if ($action === 'add') {
+    if ($action === 'add_defaults') {
+        $default_weights = [
+            'Обычный' => 1.0,
+            'Важный' => 2.0,
+            'Контрольный' => 3.0
+        ];
+        $default_types = [
+            ['Ответ на уроке', 'Обычный'],
+            ['Домашняя работа', 'Обычный'],
+            ['Самостоятельная', 'Важный'],
+            ['Контрольная', 'Контрольный'],
+            ['Диктант/Сочинение', 'Контрольный']
+        ];
+
+        try {
+            $pdo->beginTransaction();
+            $weight_ids = [];
+            foreach ($default_weights as $weight_name => $weight_value) {
+                $stmt = $pdo->prepare("SELECT id FROM grade_weights WHERE school_id = ? AND name = ? LIMIT 1");
+                $stmt->execute([$school_id, $weight_name]);
+                $weight_id = $stmt->fetchColumn();
+                if ($weight_id === false) {
+                    $stmt = $pdo->prepare("
+                        INSERT INTO grade_weights (school_id, name, weight, is_active)
+                        VALUES (?, ?, ?, 1)
+                    ");
+                    $stmt->execute([$school_id, $weight_name, $weight_value]);
+                    $weight_id = $pdo->lastInsertId();
+                }
+                $weight_ids[$weight_name] = (int)$weight_id;
+            }
+
+            foreach ($default_types as [$type_name, $weight_name]) {
+                $stmt = $pdo->prepare("SELECT id FROM grade_types WHERE school_id = ? AND name = ? LIMIT 1");
+                $stmt->execute([$school_id, $type_name]);
+                if ($stmt->fetchColumn() === false) {
+                    $stmt = $pdo->prepare("
+                        INSERT INTO grade_types (school_id, name, min_score, max_score, default_weight_id, color, is_active)
+                        VALUES (?, ?, 2, 5, ?, '#3498db', 1)
+                    ");
+                    $stmt->execute([$school_id, $type_name, $weight_ids[$weight_name]]);
+                }
+            }
+
+            $pdo->commit();
+            logUserAction($pdo, 'grade_defaults_added', json_encode(['school_id' => $school_id], JSON_UNESCAPED_UNICODE));
+            $_SESSION['success_message'] = 'Стандартные типы и веса оценок добавлены (уже существующие не изменены).';
+            header('Location: grade_types.php');
+            exit;
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $error = publicErrorMessage($e, basename(__FILE__));
+        }
+    } elseif ($action === 'add') {
         $name = trim($_POST['name']);
         $min_score = intval($_POST['min_score']);
         $max_score = intval($_POST['max_score']);
+        $raw_default_weight_id = $_POST['default_weight_id'] ?? '';
+        $default_weight_id = $raw_default_weight_id === ''
+            ? 0
+            : (is_scalar($raw_default_weight_id) ? filter_var((string)$raw_default_weight_id, FILTER_VALIDATE_INT) : false);
         $description = !empty($_POST['description']) ? trim($_POST['description']) : null;
         $color = !empty($_POST['color']) ? trim($_POST['color']) : '#3498db';
         $is_active = isset($_POST['is_active']) ? 1 : 0;
@@ -68,6 +120,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($max_score <= $min_score) {
             $errors[] = "Максимальный балл должен быть больше минимального";
+        }
+
+        if ($raw_default_weight_id !== '' && ($default_weight_id === false || $default_weight_id < 1)) {
+            $errors[] = "Некорректно указан вес по умолчанию";
+        }
+
+        if ($default_weight_id > 0) {
+            $weight_stmt = $pdo->prepare("
+                SELECT id FROM grade_weights
+                WHERE id = ? AND school_id = ? AND is_active = 1
+            ");
+            $weight_stmt->execute([$default_weight_id, $school_id]);
+            if (!$weight_stmt->fetchColumn()) {
+                $errors[] = "Выберите активный вес этой школы";
+            }
+        } else {
+            $default_weight_id = null;
         }
 
         if (empty($errors)) {
@@ -83,8 +152,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errors[] = "Тип оценки с таким названием уже существует";
                 } else {
                     $stmt = $pdo->prepare("
-                        INSERT INTO grade_types (school_id, name, min_score, max_score, description, color, is_active) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO grade_types (school_id, name, min_score, max_score, default_weight_id, description, color, is_active) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ");
 
                     $stmt->execute([
@@ -92,17 +161,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $name,
                         $min_score,
                         $max_score,
+                        $default_weight_id,
                         $description,
                         $color,
                         $is_active
                     ]);
 
+                    logUserAction($pdo, 'grade_type_created', json_encode([
+                        'school_id' => $school_id,
+                        'name' => $name,
+                        'default_weight_id' => $default_weight_id
+                    ], JSON_UNESCAPED_UNICODE));
                     $_SESSION['success_message'] = "Тип оценки успешно добавлен!";
                     header('Location: grade_types.php');
                     exit;
                 }
             } catch (PDOException $e) {
-                $error = "Ошибка при добавлении типа оценки: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -113,6 +188,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = trim($_POST['name']);
         $min_score = intval($_POST['min_score']);
         $max_score = intval($_POST['max_score']);
+        $raw_default_weight_id = $_POST['default_weight_id'] ?? '';
+        $default_weight_id = $raw_default_weight_id === ''
+            ? 0
+            : (is_scalar($raw_default_weight_id) ? filter_var((string)$raw_default_weight_id, FILTER_VALIDATE_INT) : false);
         $description = !empty($_POST['description']) ? trim($_POST['description']) : null;
         $color = !empty($_POST['color']) ? trim($_POST['color']) : '#3498db';
         $is_active = isset($_POST['is_active']) ? 1 : 0;
@@ -130,6 +209,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($max_score <= $min_score) {
             $errors[] = "Максимальный балл должен быть больше минимального";
+        }
+
+        if ($raw_default_weight_id !== '' && ($default_weight_id === false || $default_weight_id < 1)) {
+            $errors[] = "Некорректно указан вес по умолчанию";
+        }
+
+        if ($default_weight_id > 0) {
+            $weight_stmt = $pdo->prepare("
+                SELECT id FROM grade_weights
+                WHERE id = ? AND school_id = ?
+                    AND (is_active = 1 OR id = (
+                        SELECT default_weight_id FROM grade_types
+                        WHERE id = ? AND school_id = ?
+                    ))
+            ");
+            $weight_stmt->execute([$default_weight_id, $school_id, $grade_type_id, $school_id]);
+            if (!$weight_stmt->fetchColumn()) {
+                $errors[] = "Выберите активный вес этой школы";
+            }
+        } else {
+            $default_weight_id = null;
         }
 
         if (empty($errors)) {
@@ -146,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $stmt = $pdo->prepare("
                         UPDATE grade_types 
-                        SET name = ?, min_score = ?, max_score = ?, description = ?, color = ?, is_active = ?
+                        SET name = ?, min_score = ?, max_score = ?, default_weight_id = ?, description = ?, color = ?, is_active = ?
                         WHERE id = ? AND school_id = ?
                     ");
 
@@ -154,6 +254,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $name,
                         $min_score,
                         $max_score,
+                        $default_weight_id,
                         $description,
                         $color,
                         $is_active,
@@ -161,12 +262,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $school_id
                     ]);
 
+                    logUserAction($pdo, 'grade_type_updated', json_encode([
+                        'school_id' => $school_id,
+                        'grade_type_id' => $grade_type_id,
+                        'default_weight_id' => $default_weight_id
+                    ], JSON_UNESCAPED_UNICODE));
                     $_SESSION['success_message'] = "Тип оценки успешно обновлен!";
                     header('Location: grade_types.php');
                     exit;
                 }
             } catch (PDOException $e) {
-                $error = "Ошибка при обновлении типа оценки: " . $e->getMessage();
+                $error = publicErrorMessage($e, basename(__FILE__));
             }
         } else {
             $error = implode("<br>", $errors);
@@ -177,18 +283,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Обработка удаления типа оценки
 if ($action === 'delete' && $grade_type_id > 0) {
     try {
-        $stmt = $pdo->prepare("DELETE FROM grade_types WHERE id = ? AND school_id = ?");
-        $stmt->execute([$grade_type_id, $school_id]);
-
-        if ($stmt->rowCount() > 0) {
-            $_SESSION['success_message'] = "Тип оценки успешно удален!";
+        $usage_stmt = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM grades g
+            JOIN users u ON u.id = g.student_id AND u.school_id = ?
+            WHERE g.grade_type_id = ?
+        ");
+        $usage_stmt->execute([$school_id, $grade_type_id]);
+        if ((int)$usage_stmt->fetchColumn() > 0) {
+            $stmt = $pdo->prepare("UPDATE grade_types SET is_active = 0 WHERE id = ? AND school_id = ?");
+            $stmt->execute([$grade_type_id, $school_id]);
+            $_SESSION['success_message'] = "Тип используется в оценках и отключен. История оценок сохранена.";
         } else {
-            $_SESSION['error_message'] = "Тип оценки не найден или у вас нет прав для его удаления";
+            $stmt = $pdo->prepare("DELETE FROM grade_types WHERE id = ? AND school_id = ?");
+            $stmt->execute([$grade_type_id, $school_id]);
+            $_SESSION['success_message'] = $stmt->rowCount() > 0
+                ? "Тип оценки успешно удален!"
+                : "Тип оценки не найден или у вас нет прав для его удаления";
         }
+
+        logUserAction($pdo, 'grade_type_deleted_or_disabled', json_encode([
+            'school_id' => $school_id,
+            'grade_type_id' => $grade_type_id
+        ], JSON_UNESCAPED_UNICODE));
         header('Location: grade_types.php');
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при удалении типа оценки: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: grade_types.php');
         exit;
     }
@@ -199,8 +320,10 @@ $grade_type_data = null;
 if (($action === 'edit' || $action === 'view') && $grade_type_id > 0) {
     try {
         $stmt = $pdo->prepare("
-            SELECT * FROM grade_types 
-            WHERE id = ? AND school_id = ?
+            SELECT gt.*, gw.name AS default_weight_name, gw.weight AS default_weight_value, gw.is_active AS default_weight_active
+            FROM grade_types gt
+            LEFT JOIN grade_weights gw ON gw.id = gt.default_weight_id AND gw.school_id = gt.school_id
+            WHERE gt.id = ? AND gt.school_id = ?
         ");
         $stmt->execute([$grade_type_id, $school_id]);
         $grade_type_data = $stmt->fetch();
@@ -211,7 +334,7 @@ if (($action === 'edit' || $action === 'view') && $grade_type_id > 0) {
             exit;
         }
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Ошибка при получении данных типа оценки: " . $e->getMessage();
+        $_SESSION['error_message'] = publicErrorMessage($e, basename(__FILE__));
         header('Location: grade_types.php');
         exit;
     }
@@ -221,15 +344,30 @@ if (($action === 'edit' || $action === 'view') && $grade_type_id > 0) {
 $grade_types = [];
 try {
     $stmt = $pdo->prepare("
-        SELECT * FROM grade_types 
-        WHERE school_id = ?
-        ORDER BY min_score ASC
+        SELECT gt.*, gw.name AS default_weight_name, gw.weight AS default_weight_value, gw.is_active AS default_weight_active
+        FROM grade_types gt
+        LEFT JOIN grade_weights gw ON gw.id = gt.default_weight_id AND gw.school_id = gt.school_id
+        WHERE gt.school_id = ?
+        ORDER BY gt.min_score ASC
     ");
     $stmt->execute([$school_id]);
     $grade_types = $stmt->fetchAll();
 } catch (PDOException $e) {
     $grade_types = [];
 }
+$standard_grade_type_names = ['Ответ на уроке', 'Домашняя работа', 'Самостоятельная', 'Контрольная', 'Диктант/Сочинение'];
+$standard_grade_weight_names = ['Обычный', 'Важный', 'Контрольный'];
+$existing_grade_type_names = array_column($grade_types, 'name');
+$existing_grade_weight_names = [];
+try {
+    $names_stmt = $pdo->prepare("SELECT name FROM grade_weights WHERE school_id = ?");
+    $names_stmt->execute([$school_id]);
+    $existing_grade_weight_names = $names_stmt->fetchAll(PDO::FETCH_COLUMN);
+} catch (PDOException $e) {
+    error_log('Ошибка проверки стандартных весов: ' . $e->getMessage());
+}
+$show_default_setup = (bool)array_diff($standard_grade_type_names, $existing_grade_type_names)
+    || (bool)array_diff($standard_grade_weight_names, $existing_grade_weight_names);
 ?>
 
 <!DOCTYPE html>
@@ -407,38 +545,7 @@ try {
 </head>
 <body>
 <div class="dashboard-container">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h1>Знание Севера</h1>
-            <p>Электронный дневник</p>
-            <?php if ($school): ?>
-                <div class="school-info">
-                    <strong><?php echo htmlspecialchars($school['short_name'] ?: $school['full_name']); ?></strong>
-                </div>
-            <?php endif; ?>
-        </div>
-        <nav class="sidebar-nav">
-            <div class="user-info">
-                <strong><?php echo htmlspecialchars($_SESSION['user_name']); ?></strong>
-                <span class="role-badge school-admin">Администратор школы</span>
-            </div>
-            <ul class="nav-menu">
-                <li><a href="dashboard.php" class="nav-link">🏠 Главная</a></li>
-                <li class="nav-section">Управление школой</li>
-                <li><a href="classes.php" class="nav-link">👨‍🏫 Классы</a></li>
-                <li><a href="teachers.php" class="nav-link">👥 Учителя</a></li>
-                <li><a href="students.php" class="nav-link">🎓 Ученики</a></li>
-                <li><a href="parents.php" class="nav-link">👨‍👩‍👧‍👦 Родители</a></li>
-                <li><a href="schedule.php" class="nav-link">📅 Расписание</a></li>
-                <li><a href="grade_types.php" class="nav-link active">📊 Типы оценок</a></li>
-                <li><a href="grade_weights.php" class="nav-link">⚖️ Веса оценок</a></li>
-                <li><a href="reports.php" class="nav-link">📈 Отчеты</a></li>
-                <li class="nav-section">Общее</li>
-                <li><a href="../profile.php" class="nav-link">👤 Профиль</a></li>
-                <li><a href="../logout.php" class="nav-link">🚪 Выход</a></li>
-            </ul>
-        </nav>
-    </aside>
+    <?php $schoolAdminActivePage = 'grade_types'; require __DIR__ . '/../includes/school_admin_sidebar.php'; ?>
 
     <main class="main-content">
         <header class="content-header">
@@ -447,21 +554,28 @@ try {
                 <p><?php echo htmlspecialchars($school['full_name']); ?></p>
             </div>
             <div class="header-actions">
+                <?php if ($show_default_setup): ?>
+                    <form method="POST" style="display:inline">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="action" value="add_defaults">
+                        <button type="submit" class="btn btn-secondary">Добавить стандартный набор</button>
+                    </form>
+                <?php endif; ?>
                 <a href="grade_types.php?action=add" class="btn btn-primary">➕ Добавить тип оценки</a>
             </div>
         </header>
 
         <div class="content-body">
             <?php if (isset($_SESSION['success_message'])): ?>
-                <div class="alert alert-success"><?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?></div>
+                <div class="alert alert-success"><?php echo consumeFlashMessage('success_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
-                <div class="alert alert-error"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></div>
+                <div class="alert alert-error"><?php echo consumeFlashMessage('error_message'); ?></div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
-                <div class="alert alert-error"><?php echo $error; ?></div>
+                <div class="alert alert-error"><?php echo nl2br(htmlspecialchars(str_replace('<br>', "\n", $error), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')); ?></div>
             <?php endif; ?>
 
             <?php if ($action === 'add' || $action === 'edit'): ?>
@@ -469,6 +583,9 @@ try {
                 <div class="admin-form">
                     <h2><?php echo $action === 'add' ? 'Добавить тип оценки' : 'Редактировать тип оценки'; ?></h2>
                     <form method="POST">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="<?php echo htmlspecialchars($action, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="id" value="<?php echo (int)$grade_type_id; ?>">
                         <div class="form-grid">
                             <div class="form-group">
                                 <label for="name">Название типа оценки *</label>
@@ -490,6 +607,31 @@ try {
                                        value="<?php echo isset($_POST['max_score']) ? htmlspecialchars($_POST['max_score']) : (isset($grade_type_data['max_score']) ? htmlspecialchars($grade_type_data['max_score']) : '5'); ?>"
                                        min="1" max="10" required>
                                 <small class="form-hint">Максимальное значение балла</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="default_weight_id">Вес по умолчанию</label>
+                                <?php
+                                $selected_weight_id = isset($_POST['default_weight_id']) && is_scalar($_POST['default_weight_id'])
+                                    ? (string)$_POST['default_weight_id']
+                                    : ($grade_type_data['default_weight_id'] ?? '');
+                                $current_weight_unavailable = !empty($grade_type_data['default_weight_id'])
+                                    && !in_array((int)$grade_type_data['default_weight_id'], array_map('intval', array_column($active_grade_weights, 'id')), true);
+                                ?>
+                                <select id="default_weight_id" name="default_weight_id">
+                                    <option value="" <?= $selected_weight_id === '' || (int)$selected_weight_id === 0 ? 'selected' : '' ?>>Без веса — 1.00</option>
+                                    <?php if ($current_weight_unavailable): ?>
+                                        <option value="<?= (int)$grade_type_data['default_weight_id'] ?>" <?= (int)$selected_weight_id === (int)$grade_type_data['default_weight_id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($grade_type_data['default_weight_name'] ?? 'Отключённый вес', ENT_QUOTES, 'UTF-8') ?>
+                                            (<?= htmlspecialchars((string)($grade_type_data['default_weight_value'] ?? ''), ENT_QUOTES, 'UTF-8') ?>, отключён)
+                                        </option>
+                                    <?php endif; ?>
+                                    <?php foreach ($active_grade_weights as $weight): ?>
+                                        <option value="<?= (int)$weight['id'] ?>" <?= (int)$selected_weight_id === (int)$weight['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($weight['name'], ENT_QUOTES, 'UTF-8') ?>
+                                            (<?= htmlspecialchars((string)$weight['weight'], ENT_QUOTES, 'UTF-8') ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
                             </div>
                             <div class="form-group">
                                 <label for="color">Цвет отображения</label>
@@ -535,6 +677,15 @@ try {
                         <div class="info-item">
                             <label>Диапазон баллов:</label>
                             <span><?php echo $grade_type_data['min_score']; ?> - <?php echo $grade_type_data['max_score']; ?></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Вес по умолчанию:</label>
+                            <span>
+                                <?= htmlspecialchars($grade_type_data['default_weight_name'] ?? 'Не задан — 1.00', ENT_QUOTES, 'UTF-8') ?>
+                                <?php if (isset($grade_type_data['default_weight_value'])): ?>
+                                    (<?= htmlspecialchars((string)$grade_type_data['default_weight_value'], ENT_QUOTES, 'UTF-8') ?>)
+                                <?php endif; ?>
+                            </span>
                         </div>
                         <div class="info-item">
                             <label>Цвет:</label>
@@ -587,7 +738,7 @@ try {
                                     <h3 class="grade-type-title"><?php echo htmlspecialchars($grade_type['name']); ?></h3>
                                     <div class="table-actions">
                                         <a href="grade_types.php?action=edit&id=<?php echo $grade_type['id']; ?>" class="btn-action">✏️</a>
-                                        <a href="grade_types.php?action=delete&id=<?php echo $grade_type['id']; ?>" class="btn-action" onclick="return confirm('Удалить тип оценки?')">🗑️</a>
+                                        <?php echo csrf_post_button('delete', (int)$grade_type['id'], '🗑️', 'btn-action', 'Удалить тип оценки?'); ?>
                                     </div>
                                 </div>
 
@@ -596,6 +747,14 @@ try {
                                         <?php echo htmlspecialchars($grade_type['description']); ?>
                                     </div>
                                 <?php endif; ?>
+
+                                <div class="grade-type-description">
+                                Вес по умолчанию:
+                                <?= htmlspecialchars($grade_type['default_weight_name'] ?? 'не задан (1.00)', ENT_QUOTES, 'UTF-8') ?>
+                                <?php if (isset($grade_type['default_weight_value'])): ?>
+                                    (<?= htmlspecialchars((string)$grade_type['default_weight_value'], ENT_QUOTES, 'UTF-8') ?>)
+                                <?php endif; ?>
+                                </div>
 
                                 <div class="grade-type-footer">
                     <span class="status-badge status-<?php echo $grade_type['is_active'] ? 'active' : 'inactive'; ?>">
